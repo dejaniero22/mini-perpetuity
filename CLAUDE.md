@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Mini Perpetuity: single-user memory layer, two isolated instances. Plan: `docs/plan/BUILD_PLAN.md`. Rules: `GOVERNANCE.md`.
+Mini Perpetuity: single-user memory layer, N isolated named instances (separate accounts). Plan: `docs/plan/BUILD_PLAN.md`. Rules: `GOVERNANCE.md`.
 
 - Work one milestone at a time (M0, M1, …). Do not start step N+1 before N's exit criteria are met and Rio accepts it.
 - Label claims **[V]/[V2]/[U]/[Inference]**. Say "I cannot confirm this" instead of guessing. Check package names, versions and licenses against a primary source before adding a dependency.

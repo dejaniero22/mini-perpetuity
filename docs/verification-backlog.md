@@ -12,3 +12,4 @@
 | MB8 | macOS Keychain access from Python (library, license) | M3 | open |
 | MB9 | Main ADR/Guide texts re-read; confirm inheritance list and §-citations | M1 | open |
 | MB10 | Plan §2 lists ADR-0016 for both the ledger and native-PG dev; confirm which ADR covers which | M1 | open |
+| MB11 | Postgres identifier/role-name limits and quoting for `mp_<name>` names; keychain item naming per instance | M1 | open |
