@@ -1,6 +1,6 @@
 # ADR-M0: Adopt a governance subset and inherit main ADRs
 
-- **Status:** Proposed (needs acceptance by Rio)
+- **Status:** Accepted (Rio, 2026-11-10)
 - **Date:** 2026-11-10
 
 ## Decision

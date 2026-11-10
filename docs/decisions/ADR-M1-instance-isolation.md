@@ -1,6 +1,6 @@
 # ADR-M1: Instance isolation model and INV-5 deviation
 
-- **Status:** Proposed (needs acceptance by Rio)
+- **Status:** Accepted (Rio, 2026-11-10)
 - **Date:** 2026-11-10
 - **Amended:** same day. Instances are now *any number of named instances*, not a fixed pair (deviation D6). `personal` and `work` are just the first two names.
 
