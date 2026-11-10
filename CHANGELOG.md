@@ -6,3 +6,4 @@ Format: [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/). One entr
 
 ### Added
 - M0: repository foundations: README, governance subset with deviation list, `CLAUDE.md`, `SECURITY.md`, `.claude` settings and `protect-paths` hook with tests, ADR-M0 (governance subset) and ADR-M1 (N named instances, INV-5 deviation), verification backlog, CI with hook tests and gitleaks (actions pinned by SHA), Learning Note.
+- M1: `uv` project, `mp` CLI (`status`, `admin init-instance`), config loader, per-instance database and role creation with `PUBLIC` privileges revoked, isolation tests on real PostgreSQL, CI PostgreSQL 18 service container (digest-pinned), Learning Note.
