@@ -1,0 +1,7 @@
+.env*
+**/local/*.toml
+*.dump
+*.sql.gz
+*.pgdump
+.venv/
+__pycache__/
