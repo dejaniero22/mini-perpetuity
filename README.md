@@ -25,6 +25,12 @@ This creates database `mp_test` and role `mp_test_app`, revokes `PUBLIC` access,
 MP_CONFIG=~/.config/mini-perpetuity/test.toml uv run mp status
 ```
 
+After upgrading the code, bring an existing instance up to date (idempotent; admin connection only):
+
+```bash
+uv run mp admin migrate test
+```
+
 `mp status` exits non-zero if the config is missing, malformed, too permissive, or points at a database that belongs to another instance.
 
 ### Development
@@ -71,8 +77,9 @@ All instances share one local PostgreSQL cluster. A superuser, or anyone with ac
 | Step | Scope | State |
 |---|---|---|
 | M0 | Repository foundations (docs, governance, hook, CI) | done |
-| M1 | Instances and databases | in review |
-| M2–M7 | Ledger, memory objects, retrieval, MCP server, write-back, daily use | planned |
+| M1 | Instances and databases | done |
+| M2 | Append-only event ledger | in review |
+| M3–M7 | Memory objects, retrieval, MCP server, write-back, daily use | planned |
 
 Open verification items: [docs/verification-backlog.md](docs/verification-backlog.md).
 
@@ -84,8 +91,8 @@ Open verification items: [docs/verification-backlog.md](docs/verification-backlo
 | `CLAUDE.md` | Instructions for the AI coding assistant |
 | `SECURITY.md` | Security notes and reporting |
 | `CHANGELOG.md` | Keep a Changelog, one entry per step |
-| `src/mini_perpetuity/` | `config.py` (loader), `admin.py` (instance creation), `db.py`, `cli.py`, `migrations/` |
-| `tests/` | Config tests, instance-isolation tests (real PostgreSQL), hook tests |
+| `src/mini_perpetuity/` | `config.py` (loader), `admin.py` (instance creation, migrations), `db.py`, `ledger.py` (append-only events), `cli.py`, `migrations/` |
+| `tests/` | Config, instance-isolation and ledger tests (real PostgreSQL), hook tests |
 | `pyproject.toml`, `uv.lock` | Pinned project and dependencies |
 | `docs/plan/` | The build plan |
 | `docs/decisions/` | ADRs (ADR-M0, ADR-M1, …) |
