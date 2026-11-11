@@ -1,6 +1,7 @@
 import argparse
 import getpass
 import os
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -8,9 +9,11 @@ from pathlib import Path
 import psycopg
 
 from mini_perpetuity.admin import InitError, default_config_dir, init_instance, migrate_instance
+from mini_perpetuity.authz import Denied, Request
 from mini_perpetuity.config import ConfigError, load_config
 from mini_perpetuity.db import app_connect, verify_instance
 from mini_perpetuity.memory import HUMAN_TYPES, add_object
+from mini_perpetuity.search import search_memory
 from mini_perpetuity.seatbelt import Rejected
 
 
@@ -19,6 +22,34 @@ def _status() -> int:
     with app_connect(cfg) as conn:
         verify_instance(conn, cfg)
     print(f"instance={cfg.instance} db={cfg.dbname} data_policy={cfg.data_policy}")
+    return 0
+
+
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def safe_text(text: str) -> str:
+    """Stored text is untrusted: neutralize control characters (terminal escape sequences)."""
+    return _CONTROL.sub("?", text)
+
+
+def _search(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    request = Request(f"human:{getpass.getuser()}", cfg.instance, "search")
+    with app_connect(cfg) as conn:
+        verify_instance(conn, cfg)
+        hits = search_memory(conn, cfg, request, args.query, history=args.history, limit=args.limit)
+    for m in hits:
+        known = f"known {m.created_at:%Y-%m-%d}" + (
+            f"..{m.expired_at:%Y-%m-%d}" if m.expired_at else ""
+        )
+        valid = f"valid {m.valid_at:%Y-%m-%d}.." + (
+            f"{m.invalid_at:%Y-%m-%d}" if m.invalid_at else ""
+        )
+        print(f"#{m.id}  {m.epistemic_type}  {m.status}  {valid}  {known}")
+        for line in safe_text(m.content).splitlines() or [""]:
+            print(f"    {line}")
+    print(f"{len(hits)} result(s)")
     return 0
 
 
@@ -79,6 +110,10 @@ def main(argv: list[str] | None = None) -> int:
     add.add_argument("--source", help="pointer to the source (required for source_record)")
     add.add_argument("--valid-at", help="ISO 8601 with offset; default now")
     add.add_argument("--sensitivity", choices=("normal", "sensitive"), default="normal")
+    search = sub.add_parser("search", help="full-text search over approved memory")
+    search.add_argument("query", help='words; "quoted phrase", -excluded, or are supported')
+    search.add_argument("--history", action="store_true", help="include superseded versions")
+    search.add_argument("--limit", type=int, default=10, help="1 to 50 (default 10)")
     admin = sub.add_parser("admin", help="admin-only commands").add_subparsers(
         dest="admin_cmd", required=True
     )
@@ -94,10 +129,12 @@ def main(argv: list[str] | None = None) -> int:
             return _status()
         if args.cmd == "add":
             return _add(args)
+        if args.cmd == "search":
+            return _search(args)
         if args.admin_cmd == "migrate":
             return _migrate(args.name)
         return _init(args.name, args.config_dir)
-    except (ConfigError, InitError, Rejected, ValueError, psycopg.Error) as e:
+    except (ConfigError, InitError, Denied, Rejected, ValueError, psycopg.Error) as e:
         print(f"mp: error: {e}", file=sys.stderr)
         return 1 if isinstance(e, psycopg.Error) else 2
 

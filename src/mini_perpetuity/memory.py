@@ -22,7 +22,7 @@ EPISTEMIC_TYPES = (
     "summary",
 )
 HUMAN_TYPES = ("human_decision", "source_record")  # what `mp add` may create
-_COLS = (
+COLS = (
     "id, epistemic_type, content, valid_at, invalid_at, created_at, expired_at, status, "
     "sensitivity, supersedes, was_derived_from, generated_by_activity, attributed_to_agent"
 )
@@ -102,7 +102,7 @@ def correct_object(
     old = (
         conn.cursor(row_factory=class_row(Memory))
         .execute(
-            f"SELECT {_COLS} FROM memory_objects WHERE id = %s FOR UPDATE",  # noqa: S608
+            f"SELECT {COLS} FROM memory_objects WHERE id = %s FOR UPDATE",  # noqa: S608
             (old_id,),
         )
         .fetchone()
@@ -111,6 +111,10 @@ def correct_object(
         raise ValueError(f"no memory object {old_id}")
     if old.expired_at is not None:
         raise ValueError(f"memory object {old_id} is already superseded")
+    if old.status != "approved":  # superseded must mean "was approved" (see migration 0004)
+        raise ValueError(
+            f"memory object {old_id} is {old.status}; only approved objects can be corrected"
+        )
     new_content = old.content if content is None else content
     check_text(new_content)
     new_id = _insert(
@@ -140,7 +144,7 @@ def as_of(conn: Conn, valid_on: datetime, known_on: datetime | None = None) -> l
     """Versions true on `valid_on` as the system knew them on `known_on` (default: now)."""
     cur = conn.cursor(row_factory=class_row(Memory))
     return cur.execute(
-        f"SELECT {_COLS} FROM memory_objects "  # noqa: S608
+        f"SELECT {COLS} FROM memory_objects "  # noqa: S608
         "WHERE valid_at <= %(v)s AND (invalid_at IS NULL OR invalid_at > %(v)s) "
         "AND created_at <= COALESCE(%(k)s::timestamptz, now()) "
         "AND (expired_at IS NULL OR expired_at > COALESCE(%(k)s::timestamptz, now())) "

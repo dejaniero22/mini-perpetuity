@@ -39,7 +39,17 @@ uv run mp add --type human_decision --content "Use PostgreSQL for storage."
 uv run mp add --type source_record --content "Retention is 7 years" --source "policy X, section Y" --valid-at 2024-01-01T00:00:00+00:00
 ```
 
-There is no read-back command yet (retrieval arrives in M4, the MCP server in M5). Until then, inspect with `psql` as the admin role.
+Search what you have stored (approved, currently valid memory only):
+
+```bash
+uv run mp search postgresql
+uv run mp search '"storage engine" -mysql' --limit 5
+uv run mp search postgresql --history      # also superseded versions of corrected memories
+```
+
+Query syntax: words (all must match), `"quoted phrase"`, `-excluded`, `or`. Matching is by whole word with English stemming ("stores" matches "store"), not by prefix: `postgres` does not match `PostgreSQL`.
+
+**Every search is recorded in the append-only ledger, including the query text, and cannot be erased.** Obvious secrets in a query are refused, but do not search for anything you would not want kept forever.
 
 `mp status` exits non-zero if the config is missing, malformed, too permissive, or points at a database that belongs to another instance.
 
@@ -89,8 +99,9 @@ All instances share one local PostgreSQL cluster. A superuser, or anyone with ac
 | M0 | Repository foundations (docs, governance, hook, CI) | done |
 | M1 | Instances and databases | done |
 | M2 | Append-only event ledger | done |
-| M3 | Memory objects (bi-temporal, provenance), `mp add` | in review |
-| M4–M7 | Retrieval, MCP server, write-back, daily use | planned |
+| M3 | Memory objects (bi-temporal, provenance), `mp add` | done |
+| M4 | Retrieval: full-text search, default-deny authorization, audit, `mp search` | in review |
+| M5–M7 | MCP server, write-back, daily use | planned |
 
 Open verification items: [docs/verification-backlog.md](docs/verification-backlog.md).
 
@@ -102,8 +113,8 @@ Open verification items: [docs/verification-backlog.md](docs/verification-backlo
 | `CLAUDE.md` | Instructions for the AI coding assistant |
 | `SECURITY.md` | Security notes and reporting |
 | `CHANGELOG.md` | Keep a Changelog, one entry per step |
-| `src/mini_perpetuity/` | `config.py` (loader), `admin.py` (instance creation, migrations), `db.py`, `ledger.py` (append-only events), `memory.py` (bi-temporal objects), `seatbelt.py`, `cli.py`, `migrations/` |
-| `tests/` | Config, instance-isolation, ledger and memory tests (real PostgreSQL), hook tests |
+| `src/mini_perpetuity/` | `config.py` (loader), `admin.py` (instance creation, migrations), `db.py`, `ledger.py` (append-only events), `memory.py` (bi-temporal objects), `search.py` (retrieval), `authz.py` (default-deny gate), `seatbelt.py`, `cli.py`, `migrations/` |
+| `tests/` | Config, instance-isolation, ledger, memory, search and authorization tests (real PostgreSQL), hook tests |
 | `pyproject.toml`, `uv.lock` | Pinned project and dependencies |
 | `docs/plan/` | The build plan |
 | `docs/decisions/` | ADRs (ADR-M0, ADR-M1, …) |
