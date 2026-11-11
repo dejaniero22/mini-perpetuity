@@ -86,6 +86,42 @@ Register **one instance per client profile or Project** (the `work` server only 
 ### Limits
 All instances share one local PostgreSQL cluster. A superuser, or anyone with access to your Mac login, can read all of them.
 
+## Connect an AI client (read-only)
+
+Each AI client you connect is registered **by name** in the instance's config and runs its own server process, bound to one instance. It can only search and fetch approved memory; it cannot write, approve, or see `sensitive` objects.
+
+1. **Register the client** in the instance config (for example `~/.config/mini-perpetuity/personal.toml`):
+
+   ```toml
+   clients = ["claude-desktop"]
+   ```
+
+2. **Add a server entry to the client.** For Claude Desktop, in `claude_desktop_config.json` (macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`), then fully quit and reopen the app. Use absolute paths:
+
+   ```json
+   {
+     "mcpServers": {
+       "memory-personal": {
+         "command": "/ABSOLUTE/PATH/TO/mini-perpetuity/.venv/bin/mp",
+         "args": ["serve", "--client", "claude-desktop",
+                  "--config", "/ABSOLUTE/PATH/TO/.config/mini-perpetuity/personal.toml"]
+       }
+     }
+   }
+   ```
+
+   For Claude Code the equivalent is `claude mcp add memory-personal -- /ABSOLUTE/PATH/TO/.venv/bin/mp serve --client claude-code --config /ABSOLUTE/PATH/TO/personal.toml`, with `claude-code` added to `clients`.
+
+3. **One instance per client profile or Project** (the client rule above). Never register the `work` server where the `personal` server is, or the reverse.
+
+Tested here: the exact command above (absolute `mp`, `serve --client --config`, no environment variables) against the MCP Python SDK's own client over stdio. **[V]** Not tested: the entries inside Claude Desktop or Claude Code themselves; their config formats come from the SDK's documentation (a secondary source for those apps). **[V2]**
+
+**Limits to understand before you connect a client:**
+- The `--client` name is a label in the client's own config; a local stdio server cannot verify who launched it.
+- **A client that can run shell commands as your OS user can bypass the server** (it can read the `0600` password file and connect to PostgreSQL directly). Registration only constrains what a client can do through the server. Details: [ADR-M5](docs/decisions/ADR-M5-mcp-server.md).
+- Limits: 60 requests per minute per client; denied requests are capped at 20 per minute per instance, after which they are refused but no longer recorded.
+- Everything a client searches for is recorded in the permanent ledger.
+
 ## Data rules
 
 - No real data in git, ever: the repo holds code, docs and synthetic fixtures only.
@@ -100,8 +136,9 @@ All instances share one local PostgreSQL cluster. A superuser, or anyone with ac
 | M1 | Instances and databases | done |
 | M2 | Append-only event ledger | done |
 | M3 | Memory objects (bi-temporal, provenance), `mp add` | done |
-| M4 | Retrieval: full-text search, default-deny authorization, audit, `mp search` | in review |
-| M5–M7 | MCP server, write-back, daily use | planned |
+| M4 | Retrieval: full-text search, default-deny authorization, audit, `mp search` | done |
+| M5 | Read-only MCP server (stdio), per-client principals, rate limits | in review |
+| M6–M7 | Write-back with quarantine, daily use | planned |
 
 Open verification items: [docs/verification-backlog.md](docs/verification-backlog.md).
 
@@ -113,8 +150,8 @@ Open verification items: [docs/verification-backlog.md](docs/verification-backlo
 | `CLAUDE.md` | Instructions for the AI coding assistant |
 | `SECURITY.md` | Security notes and reporting |
 | `CHANGELOG.md` | Keep a Changelog, one entry per step |
-| `src/mini_perpetuity/` | `config.py` (loader), `admin.py` (instance creation, migrations), `db.py`, `ledger.py` (append-only events), `memory.py` (bi-temporal objects), `search.py` (retrieval), `authz.py` (default-deny gate), `seatbelt.py`, `cli.py`, `migrations/` |
-| `tests/` | Config, instance-isolation, ledger, memory, search and authorization tests (real PostgreSQL), hook tests |
+| `src/mini_perpetuity/` | `config.py` (loader), `admin.py` (instance creation, migrations), `db.py`, `ledger.py` (append-only events), `memory.py` (bi-temporal objects), `search.py` (retrieval), `authz.py` (default-deny gate), `access.py` (gate + rate limits), `mcp_server.py` (MCP server), `seatbelt.py`, `cli.py`, `migrations/` |
+| `tests/` | Config, instance-isolation, ledger, memory, search, authorization, rate-limit and MCP contract tests (real PostgreSQL), hook tests |
 | `pyproject.toml`, `uv.lock` | Pinned project and dependencies |
 | `docs/plan/` | The build plan |
 | `docs/decisions/` | ADRs (ADR-M0, ADR-M1, …) |

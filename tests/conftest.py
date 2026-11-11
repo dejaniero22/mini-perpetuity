@@ -40,3 +40,16 @@ def make_instance(admin_dsn: str, tmp_path: Path) -> Iterator[Callable[[], Confi
                 )
             )
             c.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role_name(name))))
+
+
+@pytest.fixture
+def register_clients() -> Callable[..., Config]:
+    """Add `clients = [...]` to an instance's config file and reload it."""
+
+    def register(cfg: Config, *names: str) -> Config:
+        path = cfg.password_file.with_suffix(".toml")
+        with path.open("a") as f:  # appending keeps the file's 0600 mode
+            f.write("clients = [" + ", ".join(f'"{n}"' for n in names) + "]\n")
+        return load_config({"MP_CONFIG": str(path)})
+
+    return register

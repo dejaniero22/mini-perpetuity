@@ -1,9 +1,10 @@
-"""Full-text retrieval over approved memory (INV-6, INV-13). Callers commit."""
+"""Retrieval of approved memory (INV-6, INV-13). Callers commit."""
 
 import psycopg
 from psycopg.rows import class_row
 
-from mini_perpetuity.authz import Denied, Request, authorize
+from mini_perpetuity.access import gate
+from mini_perpetuity.authz import Request
 from mini_perpetuity.config import Config
 from mini_perpetuity.ledger import append_event
 from mini_perpetuity.memory import COLS, Memory
@@ -13,13 +14,15 @@ Conn = psycopg.Connection[tuple[object, ...]]
 
 MAX_QUERY_CHARS = 500
 MAX_LIMIT = 50
-# Normal search: approved, valid now, still the current version.
+# Normal retrieval: approved, valid now, still the current version.
 _CURRENT = (
     "status = 'approved' AND valid_at <= now() AND (invalid_at IS NULL OR invalid_at > now()) "
     "AND expired_at IS NULL"
 )
 # History: every version that was ever approved ("superseded" implies it was; see 0004).
 _HISTORY = "status IN ('approved', 'superseded')"
+# Only the owner may see sensitive objects; AI clients never do (ADR-M5).
+_SENSITIVE_OK = "(%(sens)s OR sensitivity <> 'sensitive')"
 
 
 class SearchError(ValueError):
@@ -49,28 +52,18 @@ def search_memory(
     history: bool = False,
     limit: int = 10,
 ) -> list[Memory]:
-    """Authorize, search, and audit. A denied request is audited and committed before raising."""
-    try:
-        if request.action != "search":
-            raise Denied(f"action {request.action!r} is not a search")
-        authorize(cfg, request)
-    except Denied as e:
-        append_event(
-            conn, cfg, request.principal or "unknown", "authz.denied",
-            {"action": request.action, "reason": str(e)},
-        )  # fmt: skip
-        conn.commit()  # so the refusal is recorded even though the caller's work is rolled back
-        raise
+    """Authorize, search, and audit."""
+    gate(conn, cfg, request, "search")
     q = _validate(query, limit)
     hits = (
         conn.cursor(row_factory=class_row(Memory))
         .execute(
             f"SELECT {COLS} FROM memory_objects "  # noqa: S608 - fixed fragments, q is a parameter
             f"WHERE search_vector @@ websearch_to_tsquery('english', %(q)s) "
-            f"AND {_HISTORY if history else _CURRENT} "
+            f"AND {_HISTORY if history else _CURRENT} AND {_SENSITIVE_OK} "
             "ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', %(q)s)) DESC, id "
             "LIMIT %(n)s",
-            {"q": q, "n": limit},
+            {"q": q, "n": limit, "sens": request.principal == cfg.owner},
         )
         .fetchall()
     )
@@ -79,3 +72,30 @@ def search_memory(
         {"query": q, "ids": [m.id for m in hits], "history": history, "limit": limit},
     )  # fmt: skip
     return hits
+
+
+def get_memory(
+    conn: Conn, cfg: Config, request: Request, memory_id: int, *, history: bool = False
+) -> Memory | None:
+    """Authorize, fetch one object by id (same visibility rules as search), and audit.
+
+    An object the caller may not see is indistinguishable from one that does not exist: both
+    return None (not an exception, so the audit event commits).
+    """
+    gate(conn, cfg, request, "get")
+    if memory_id < 1:
+        raise SearchError("id must be a positive integer")
+    found = (
+        conn.cursor(row_factory=class_row(Memory))
+        .execute(
+            f"SELECT {COLS} FROM memory_objects "  # noqa: S608
+            f"WHERE id = %(id)s AND {_HISTORY if history else _CURRENT} AND {_SENSITIVE_OK}",
+            {"id": memory_id, "sens": request.principal == cfg.owner},
+        )
+        .fetchone()
+    )
+    append_event(
+        conn, cfg, request.principal, "memory.get",
+        {"id": memory_id, "found": found is not None, "history": history},
+    )  # fmt: skip
+    return found

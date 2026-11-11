@@ -111,3 +111,22 @@ def test_cli_refuses_without_config(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_cli_refuses_bad_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("MP_CONFIG", str(write(tmp_path, mode=0o644)))
     assert main(["status"]) == 2
+
+
+HEAD = 'instance = "work"\nhost = "h"\nport = 1\npassword_file = "/x/w.pw"\n'
+
+
+def test_clients_default_to_none_and_parse_when_given(tmp_path: Path) -> None:
+    assert load_config({"MP_CONFIG": str(write(tmp_path))}).clients == ()
+    p = write(tmp_path, body=HEAD + 'clients = ["claude-desktop", "claude-code"]\n')
+    assert load_config({"MP_CONFIG": str(p)}).clients == ("claude-desktop", "claude-code")
+
+
+@pytest.mark.parametrize(
+    "value",
+    ['"claude"', '["Claude"]', '["a b"]', '[""]', "[1]", '["a", "a"]', '["-a"]', '["a_b"]',
+     '["' + "x" * 33 + '"]', "{}"],
+)  # fmt: skip
+def test_bad_clients_refused(tmp_path: Path, value: str) -> None:
+    with pytest.raises(ConfigError, match="clients"):
+        load(write(tmp_path, body=HEAD + f"clients = {value}\n"))
