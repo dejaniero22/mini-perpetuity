@@ -8,10 +8,12 @@ from pathlib import Path
 
 import psycopg
 
+from mini_perpetuity.access import RateLimited
 from mini_perpetuity.admin import InitError, default_config_dir, init_instance, migrate_instance
 from mini_perpetuity.authz import Denied, Request
 from mini_perpetuity.config import ConfigError, load_config
 from mini_perpetuity.db import app_connect, verify_instance
+from mini_perpetuity.mcp_server import build_server
 from mini_perpetuity.memory import HUMAN_TYPES, add_object
 from mini_perpetuity.search import search_memory
 from mini_perpetuity.seatbelt import Rejected
@@ -50,6 +52,19 @@ def _search(args: argparse.Namespace) -> int:
         for line in safe_text(m.content).splitlines() or [""]:
             print(f"    {line}")
     print(f"{len(hits)} result(s)")
+    return 0
+
+
+def _serve(args: argparse.Namespace) -> int:
+    cfg = load_config({"MP_CONFIG": args.config} if args.config else None)
+    if args.client not in cfg.clients:
+        raise ConfigError(
+            f"client {args.client!r} is not registered for instance {cfg.instance!r}; "
+            f"add it to `clients = [...]` in {args.config or 'the config file'}"
+        )
+    with app_connect(cfg) as conn:
+        verify_instance(conn, cfg)  # fail now, not on the first tool call
+    build_server(cfg, args.client).run()  # stdio; stdout carries the protocol
     return 0
 
 
@@ -114,6 +129,11 @@ def main(argv: list[str] | None = None) -> int:
     search.add_argument("query", help='words; "quoted phrase", -excluded, or are supported')
     search.add_argument("--history", action="store_true", help="include superseded versions")
     search.add_argument("--limit", type=int, default=10, help="1 to 50 (default 10)")
+    serve = sub.add_parser("serve", help="run the read-only MCP server (stdio) for one client")
+    serve.add_argument(
+        "--client", required=True, help="registered client name, e.g. claude-desktop"
+    )
+    serve.add_argument("--config", help="instance config file (default: $MP_CONFIG)")
     admin = sub.add_parser("admin", help="admin-only commands").add_subparsers(
         dest="admin_cmd", required=True
     )
@@ -131,10 +151,12 @@ def main(argv: list[str] | None = None) -> int:
             return _add(args)
         if args.cmd == "search":
             return _search(args)
+        if args.cmd == "serve":
+            return _serve(args)
         if args.admin_cmd == "migrate":
             return _migrate(args.name)
         return _init(args.name, args.config_dir)
-    except (ConfigError, InitError, Denied, Rejected, ValueError, psycopg.Error) as e:
+    except (ConfigError, InitError, Denied, RateLimited, Rejected, ValueError, psycopg.Error) as e:
         print(f"mp: error: {e}", file=sys.stderr)
         return 1 if isinstance(e, psycopg.Error) else 2
 

@@ -12,7 +12,8 @@ from pathlib import Path
 
 NAME_RE = re.compile(r"[a-z][a-z0-9]{0,23}")
 DATA_POLICIES = ("synthetic_only", "real")
-_KEYS = {"instance", "host", "port", "password_file", "data_policy"}
+_KEYS = {"instance", "host", "port", "password_file", "data_policy", "clients"}
+CLIENT_RE = re.compile(r"[a-z][a-z0-9-]{0,31}")
 
 
 class ConfigError(Exception):
@@ -53,7 +54,8 @@ class Config:
     port: int
     password_file: Path
     data_policy: str
-    owner: str  # "human:<OS user owning the config file>"; the only principal authorize() allows
+    owner: str  # "human:<OS user owning the config file>"
+    clients: tuple[str, ...] = ()  # registered AI clients, each allowed as "client:<name>"
 
     @property
     def dbname(self) -> str:
@@ -100,7 +102,16 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     policy = data.get("data_policy", "synthetic_only")
     if policy not in DATA_POLICIES:
         raise ConfigError(f"data_policy must be one of {DATA_POLICIES}")
+    clients = data.get("clients", [])
+    if (
+        not isinstance(clients, list)
+        or not all(isinstance(c, str) and CLIENT_RE.fullmatch(c) for c in clients)
+        or len(set(clients)) != len(clients)
+    ):
+        raise ConfigError("clients must be a list of unique names: lowercase letters, digits, -")
     pw = Path(data["password_file"])
     if not pw.is_absolute():
         raise ConfigError("password_file must be an absolute path")
-    return Config(instance, data["host"], data["port"], pw, policy, _owner(path.stat().st_uid))
+    return Config(
+        instance, data["host"], data["port"], pw, policy, _owner(path.stat().st_uid), tuple(clients)
+    )
