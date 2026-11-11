@@ -53,15 +53,20 @@ def add(cfg: Config, content: str, **kw: object) -> int:
 
 
 def admin_insert(admin_dsn: str, cfg: Config, content: str, status: str, **cols: str) -> int:
-    """Rows the app role cannot create (proposed/rejected/future/ended): the owner inserts them."""
+    """Rows the app role cannot create (proposed/rejected/future/ended): the owner inserts them.
+
+    AI-attributed rows must start as proposals, so a rejected one is inserted pending and decided.
+    """
     row = {
         "epistemic_type": "ai_inference",
         "content": content,
         "valid_at": "2024-01-01",
-        "status": status,
+        "status": "proposed" if status == "rejected" else status,
         "was_derived_from": "doc 1",
         "generated_by_activity": "test",
-        "attributed_to_agent": "client:test",
+        "attributed_to_agent": "client:test"
+        if status in ("proposed", "rejected")
+        else "human:test",
     }
     row.update(cols)
     names, marks = ", ".join(row), ", ".join(f"%({k})s" for k in row)
@@ -69,7 +74,9 @@ def admin_insert(admin_dsn: str, cfg: Config, content: str, status: str, **cols:
     with psycopg.connect(dsn, autocommit=True) as a:
         got = a.execute(f"INSERT INTO memory_objects ({names}) VALUES ({marks}) RETURNING id", row)  # noqa: S608
         one = got.fetchone()
-    assert one is not None and isinstance(one[0], int)
+        assert one is not None and isinstance(one[0], int)
+        if status == "rejected":
+            a.execute("UPDATE memory_objects SET status = 'rejected' WHERE id = %s", (one[0],))
     return one[0]
 
 

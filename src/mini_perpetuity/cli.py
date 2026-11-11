@@ -11,10 +11,11 @@ import psycopg
 from mini_perpetuity.access import RateLimited
 from mini_perpetuity.admin import InitError, default_config_dir, init_instance, migrate_instance
 from mini_perpetuity.authz import Denied, Request
-from mini_perpetuity.config import ConfigError, load_config
+from mini_perpetuity.config import Config, ConfigError, load_config
 from mini_perpetuity.db import app_connect, verify_instance
 from mini_perpetuity.mcp_server import build_server
 from mini_perpetuity.memory import HUMAN_TYPES, add_object
+from mini_perpetuity.review import ReviewError, decide, list_proposals
 from mini_perpetuity.search import search_memory
 from mini_perpetuity.seatbelt import Rejected
 
@@ -52,6 +53,42 @@ def _search(args: argparse.Namespace) -> int:
         for line in safe_text(m.content).splitlines() or [""]:
             print(f"    {line}")
     print(f"{len(hits)} result(s)")
+    return 0
+
+
+def _owner_request(cfg: Config, action: str) -> Request:
+    return Request(f"human:{getpass.getuser()}", cfg.instance, action)
+
+
+def _review() -> int:
+    cfg = load_config()
+    with app_connect(cfg) as conn:
+        verify_instance(conn, cfg)
+        pending = list_proposals(conn, cfg, _owner_request(cfg, "review"))
+    print(
+        f"{len(pending)} pending proposal(s). Text after '|' is untrusted, written by an AI client."
+    )
+    for m in pending:
+        source = safe_text(m.was_derived_from or "")
+        print(f"\n#{m.id}  {m.epistemic_type}  from {safe_text(m.attributed_to_agent)}"
+              f"  proposed {m.created_at:%Y-%m-%d %H:%M}  derived from: {source}")  # fmt: skip
+        for line in safe_text(m.content).splitlines() or [""]:
+            print(f"    | {line}")
+    if pending:
+        print("\nApprove: mp approve ID    Reject: mp reject ID --reason TEXT")
+    return 0
+
+
+def _decide(args: argparse.Namespace, *, approve: bool) -> int:
+    cfg = load_config()
+    with app_connect(cfg) as conn:
+        verify_instance(conn, cfg)
+        m = decide(
+            conn, cfg, _owner_request(cfg, "approve" if approve else "reject"), args.id,
+            approve=approve, reason=None if approve else args.reason,
+        )  # fmt: skip
+    verb = "approved" if approve else "rejected"
+    print(f"{verb} #{m.id} ({m.epistemic_type} from {safe_text(m.attributed_to_agent)})")
     return 0
 
 
@@ -134,6 +171,12 @@ def main(argv: list[str] | None = None) -> int:
         "--client", required=True, help="registered client name, e.g. claude-desktop"
     )
     serve.add_argument("--config", help="instance config file (default: $MP_CONFIG)")
+    sub.add_parser("review", help="list AI proposals waiting for your decision")
+    approve = sub.add_parser("approve", help="approve a pending proposal (human only)")
+    approve.add_argument("id", type=int)
+    reject = sub.add_parser("reject", help="reject a pending proposal (human only)")
+    reject.add_argument("id", type=int)
+    reject.add_argument("--reason", required=True, help="why (recorded in the ledger)")
     admin = sub.add_parser("admin", help="admin-only commands").add_subparsers(
         dest="admin_cmd", required=True
     )
@@ -153,10 +196,23 @@ def main(argv: list[str] | None = None) -> int:
             return _search(args)
         if args.cmd == "serve":
             return _serve(args)
+        if args.cmd == "review":
+            return _review()
+        if args.cmd in ("approve", "reject"):
+            return _decide(args, approve=args.cmd == "approve")
         if args.admin_cmd == "migrate":
             return _migrate(args.name)
         return _init(args.name, args.config_dir)
-    except (ConfigError, InitError, Denied, RateLimited, Rejected, ValueError, psycopg.Error) as e:
+    except (
+        ConfigError,
+        InitError,
+        Denied,
+        RateLimited,
+        Rejected,
+        ReviewError,
+        ValueError,
+        psycopg.Error,
+    ) as e:
         print(f"mp: error: {e}", file=sys.stderr)
         return 1 if isinstance(e, psycopg.Error) else 2
 

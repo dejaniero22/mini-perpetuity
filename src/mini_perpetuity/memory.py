@@ -67,6 +67,7 @@ def add_object(
     valid_at: datetime | None = None,
     derived_from: str | None = None,
     sensitivity: str = "normal",
+    audit_activity: str = "memory.add",
 ) -> int:
     """Insert a first version and write a ledger event (no content in the event)."""
     check_text(content, derived_from)
@@ -83,7 +84,7 @@ def add_object(
             "attributed_to_agent": agent,
         },
     )
-    append_event(conn, cfg, agent, "memory.add", {"id": oid, "type": epistemic_type})
+    append_event(conn, cfg, agent, audit_activity, {"id": oid, "type": epistemic_type})
     return oid
 
 
