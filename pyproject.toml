@@ -1,0 +1,29 @@
+[project]
+name = "mini-perpetuity"
+version = "0.1.0"
+description = "Single-user memory layer with isolated named instances"
+requires-python = ">=3.14,<3.15"
+dependencies = ["psycopg[binary]==3.3.8"]
+
+[project.scripts]
+mp = "mini_perpetuity.cli:main"
+
+[dependency-groups]
+dev = ["pytest==9.2.0", "ruff==0.17.4", "mypy==2.4.1", "pip-audit==2.10.1"]
+
+[build-system]
+requires = ["uv_build>=0.11.32,<0.12"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S106"]
+
+[tool.mypy]
+strict = true
+files = ["src", "tests"]
