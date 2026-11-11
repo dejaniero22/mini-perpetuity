@@ -45,6 +45,37 @@ def _migrations() -> list[tuple[str, str]]:
     return sorted((p.name, p.read_text()) for p in d.iterdir() if p.name.endswith(".sql"))
 
 
+def apply_migrations(c: psycopg.Connection[tuple[object, ...]], role: str) -> list[str]:
+    """Apply unrecorded migrations, one transaction each; {app_role} in SQL becomes the app role."""
+    c.execute(
+        "CREATE TABLE IF NOT EXISTS schema_migrations "
+        "(version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())"
+    )
+    done = {r[0] for r in c.execute("SELECT version FROM schema_migrations")}
+    applied = []
+    for version, body in _migrations():
+        if version in done:
+            continue
+        with c.transaction():
+            c.execute(body.replace("{app_role}", sql.Identifier(role).as_string(c)))
+            c.execute("INSERT INTO schema_migrations (version) VALUES (%s)", (version,))
+        applied.append(version)
+    return applied
+
+
+def migrate_instance(admin_dsn: str, name: str) -> list[str]:
+    """Apply pending migrations to an existing instance; return the versions applied."""
+    try:
+        validate_name(name)
+    except ConfigError as e:
+        raise InitError(str(e)) from e
+    with psycopg.connect(make_conninfo(admin_dsn, dbname=db_name(name)), autocommit=True) as c:
+        row = c.execute("SELECT instance FROM instance_meta").fetchone()
+        if row is None or row[0] != name:
+            raise InitError(f"database {db_name(name)} does not belong to instance {name!r}")
+        return apply_migrations(c, role_name(name))
+
+
 def _drop(admin_dsn: str, name: str) -> None:
     with psycopg.connect(admin_dsn, autocommit=True) as c:
         c.execute(
@@ -97,13 +128,7 @@ def init_instance(admin_dsn: str, name: str, config_dir: Path) -> Path:
             c.execute("REVOKE ALL ON SCHEMA public FROM PUBLIC")
             c.execute(sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(ident_role))
             c.execute("ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC")
-            c.execute(
-                "CREATE TABLE schema_migrations "
-                "(version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())"
-            )
-            for version, body in _migrations():
-                c.execute(body)
-                c.execute("INSERT INTO schema_migrations (version) VALUES (%s)", (version,))
+            apply_migrations(c, role)
             c.execute("INSERT INTO instance_meta (instance) VALUES (%s)", (name,))
             c.execute(
                 sql.SQL("GRANT SELECT ON instance_meta, schema_migrations TO {}").format(ident_role)
