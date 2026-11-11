@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import pwd
 import re
 import tomllib
 from collections.abc import Mapping
@@ -52,6 +53,7 @@ class Config:
     port: int
     password_file: Path
     data_policy: str
+    owner: str  # "human:<OS user owning the config file>"; the only principal authorize() allows
 
     @property
     def dbname(self) -> str:
@@ -64,6 +66,13 @@ class Config:
     def password(self) -> str:
         check_private(self.password_file, "password file")
         return self.password_file.read_text().strip()
+
+
+def _owner(uid: int) -> str:
+    try:
+        return f"human:{pwd.getpwuid(uid).pw_name}"
+    except KeyError:
+        return f"human:{uid}"
 
 
 def load_config(env: Mapping[str, str] | None = None) -> Config:
@@ -94,4 +103,4 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     pw = Path(data["password_file"])
     if not pw.is_absolute():
         raise ConfigError("password_file must be an absolute path")
-    return Config(instance, data["host"], data["port"], pw, policy)
+    return Config(instance, data["host"], data["port"], pw, policy, _owner(path.stat().st_uid))
