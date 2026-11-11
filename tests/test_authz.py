@@ -12,15 +12,28 @@ CFG = Config(
 )  # fmt: skip
 
 
-@pytest.mark.parametrize("action", ["search", "get"])
-def test_owner_may_read_own_instance(action: str) -> None:
+@pytest.mark.parametrize("action", ["search", "get", "review", "approve", "reject"])
+def test_owner_may_use_every_owner_action(action: str) -> None:
     authorize(CFG, Request("human:rio", "work", action))
 
 
 @pytest.mark.parametrize("client", ["claude-desktop", "claude-code"])
-@pytest.mark.parametrize("action", ["search", "get"])
-def test_registered_clients_may_read(client: str, action: str) -> None:
+@pytest.mark.parametrize("action", ["search", "get", "propose"])
+def test_registered_clients_may_read_and_propose(client: str, action: str) -> None:
     authorize(CFG, Request(f"client:{client}", "work", action))
+
+
+@pytest.mark.parametrize("client", ["claude-desktop", "claude-code"])
+@pytest.mark.parametrize("action", ["approve", "reject", "review"])
+def test_a_client_can_never_decide_on_proposals(client: str, action: str) -> None:
+    with pytest.raises(Denied, match="not allowed"):
+        authorize(CFG, Request(f"client:{client}", "work", action))
+
+
+@pytest.mark.parametrize("action", ["propose"])
+def test_the_owner_does_not_propose(action: str) -> None:
+    with pytest.raises(Denied, match="not allowed"):  # the owner adds memory with `mp add`
+        authorize(CFG, Request("human:rio", "work", action))
 
 
 @pytest.mark.parametrize(
@@ -55,13 +68,14 @@ def test_other_instances_denied(principal: str, instance: str) -> None:
 
 
 @pytest.mark.parametrize("principal", ["human:rio", "client:claude-desktop"])
-@pytest.mark.parametrize("action", ["write", "propose", "approve", "SEARCH", "", "get "])
+@pytest.mark.parametrize("action", ["write", "delete", "SEARCH", "", "get ", "Approve"])
 def test_unlisted_actions_denied(principal: str, action: str) -> None:
     with pytest.raises(Denied, match="not allowed"):
         authorize(CFG, Request(principal, "work", action))
 
 
-def test_allow_lists_are_read_only() -> None:
-    # Default deny: widening these sets must come with new tests (M6 adds "propose" for clients).
-    assert OWNER_ACTIONS == {"search", "get"}
-    assert CLIENT_ACTIONS == {"search", "get"}
+def test_allow_lists_are_exactly_these() -> None:
+    # Default deny: widening these sets must come with new tests. Only the owner may decide.
+    assert OWNER_ACTIONS == {"search", "get", "review", "approve", "reject"}
+    assert CLIENT_ACTIONS == {"search", "get", "propose"}
+    assert not CLIENT_ACTIONS & {"review", "approve", "reject"}

@@ -86,9 +86,9 @@ Register **one instance per client profile or Project** (the `work` server only 
 ### Limits
 All instances share one local PostgreSQL cluster. A superuser, or anyone with access to your Mac login, can read all of them.
 
-## Connect an AI client (read-only)
+## Connect an AI client
 
-Each AI client you connect is registered **by name** in the instance's config and runs its own server process, bound to one instance. It can only search and fetch approved memory; it cannot write, approve, or see `sensitive` objects.
+Each AI client you connect is registered **by name** in the instance's config and runs its own server process, bound to one instance. It can search and fetch approved memory and **propose** new notes. It cannot approve anything, and it cannot see `sensitive` objects.
 
 1. **Register the client** in the instance config (for example `~/.config/mini-perpetuity/personal.toml`):
 
@@ -122,6 +122,20 @@ Tested here: the exact command above (absolute `mp`, `serve --client --config`, 
 - Limits: 60 requests per minute per client; denied requests are capped at 20 per minute per instance, after which they are refused but no longer recorded.
 - Everything a client searches for is recorded in the permanent ledger.
 
+## Review what AI clients propose
+
+A client's `propose_memory` tool stores a note as a quarantined **proposal**: it is invisible to search and to every client, including the one that wrote it, until you approve it. Only you can decide, with the CLI:
+
+```bash
+uv run mp review                                   # lists pending proposals (AI-written text is shown after "|")
+uv run mp approve 7                                # it becomes searchable; it stays attributed to the client
+uv run mp reject 8 --reason "that is not what I decided"
+```
+
+A proposal is an `ai_inference` or a `summary`, must name its source (`derived_from`), is at most 2,000 characters, and a client can have at most 50 waiting. Your decision and your reason are recorded in the ledger (`human_decision`). Read proposals before approving: the tool cannot tell a wrong note from a right one.
+
+**Limit:** the quarantine protects against what a client can do through the MCP server. A client that can run shell commands as your OS user could still approve its own proposal with plain SQL (details: [ADR-M6](docs/decisions/ADR-M6-write-back.md)).
+
 ## Data rules
 
 - No real data in git, ever: the repo holds code, docs and synthetic fixtures only.
@@ -137,8 +151,9 @@ Tested here: the exact command above (absolute `mp`, `serve --client --config`, 
 | M2 | Append-only event ledger | done |
 | M3 | Memory objects (bi-temporal, provenance), `mp add` | done |
 | M4 | Retrieval: full-text search, default-deny authorization, audit, `mp search` | done |
-| M5 | Read-only MCP server (stdio), per-client principals, rate limits | in review |
-| M6–M7 | Write-back with quarantine, daily use | planned |
+| M5 | MCP server (stdio), per-client principals, rate limits | done |
+| M6 | Write-back with quarantine: `propose_memory`, `mp review`/`approve`/`reject` | in review |
+| M7 | Daily use: `mp doctor`, backups | planned |
 
 Open verification items: [docs/verification-backlog.md](docs/verification-backlog.md).
 
@@ -150,8 +165,8 @@ Open verification items: [docs/verification-backlog.md](docs/verification-backlo
 | `CLAUDE.md` | Instructions for the AI coding assistant |
 | `SECURITY.md` | Security notes and reporting |
 | `CHANGELOG.md` | Keep a Changelog, one entry per step |
-| `src/mini_perpetuity/` | `config.py` (loader), `admin.py` (instance creation, migrations), `db.py`, `ledger.py` (append-only events), `memory.py` (bi-temporal objects), `search.py` (retrieval), `authz.py` (default-deny gate), `access.py` (gate + rate limits), `mcp_server.py` (MCP server), `seatbelt.py`, `cli.py`, `migrations/` |
-| `tests/` | Config, instance-isolation, ledger, memory, search, authorization, rate-limit and MCP contract tests (real PostgreSQL), hook tests |
+| `src/mini_perpetuity/` | `config.py` (loader), `admin.py` (instance creation, migrations), `db.py`, `ledger.py` (append-only events), `memory.py` (bi-temporal objects), `search.py` (retrieval), `authz.py` (default-deny gate), `access.py` (gate + rate limits), `mcp_server.py` (MCP server), `propose.py` / `review.py` (write-back and the owner's decisions), `seatbelt.py`, `cli.py`, `migrations/` |
+| `tests/` | Config, instance-isolation, ledger, memory, search, authorization, rate-limit, quarantine and MCP contract tests (real PostgreSQL), hook tests |
 | `pyproject.toml`, `uv.lock` | Pinned project and dependencies |
 | `docs/plan/` | The build plan |
 | `docs/decisions/` | ADRs (ADR-M0, ADR-M1, …) |

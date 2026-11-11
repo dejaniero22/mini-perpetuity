@@ -46,7 +46,9 @@ def gate(conn: Conn, cfg: Config, request: Request, action: str) -> None:
         raise
     if request.principal != cfg.owner:
         n = _recent(
-            conn, "actor = %s AND activity IN ('memory.search', 'memory.get')", request.principal
+            conn,
+            "actor = %s AND activity IN ('memory.search', 'memory.get', 'memory.propose')",
+            request.principal,
         )
         if n >= MAX_REQUESTS_PER_MINUTE:
             raise RateLimited(f"more than {MAX_REQUESTS_PER_MINUTE} requests in the last minute")
