@@ -9,7 +9,7 @@
 | MB5 | Can Claude Desktop/Code client config be read to check §4.2 rule | M7 | open |
 | MB6 | Academica AI and data-handling policy (Rio, not code) | before real `work` content | open |
 | MB7 | pgvector version and Python 3.14 support for any embedding library | M5b | open |
-| MB8 | macOS Keychain access from Python (library, license) | M3 | open |
+| MB8 | macOS Keychain access from Python (library and license) | M3 | **deferred by ADR-M3** (`0600` password file chosen); still unverified. |
 | MB9 | Main ADR/Guide texts re-read; confirm inheritance list and §-citations | M1 | open |
 | MB10 | Plan §2 lists ADR-0016 for both the ledger and native-PG dev; confirm which ADR covers which | M1 | open |
 | MB11 | Postgres identifier/role-name limits and quoting for `mp_<name>` names; keychain item naming per instance | M1 | partly done: longest derived name `mp_`+24+`_app` = 31 chars (limit 63 per PostgreSQL docs, **[U]** not re-read); names quoted with `psycopg.sql.Identifier`. Keychain naming open (ADR-M3). |
