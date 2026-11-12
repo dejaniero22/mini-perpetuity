@@ -16,6 +16,7 @@ INV-1, 2, 3, 4, 6, 7, 9, 10, 11, 12, 13. INV-8 deferred. Details: plan §5.
 | D3 | INV-3 provenance simplified to three PROV-O-style columns | plan §5 |
 | D4 | Separate repo; main phase gates unaffected. Nothing moves to main by copying; only via main's ADR/PR process | ADR-M0 |
 | D6 | Any number of named instances instead of exactly `personal` and `work` (plan §1, §4.1, M1 assume two) | ADR-M1 (amended) |
+| D7 | A local HTTPS web front end (plan §1 lists HTTP as out of scope; remote access stays out of scope) | ADR-M8 |
 | D5 | `.claude/settings.json` and `protect-paths.sh` are written fresh, not copied (main repo unavailable at M0) | `docs/learning/M0.md` |
 
 ## Process
