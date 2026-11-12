@@ -19,7 +19,19 @@ Use **version 18**, not a newer one. The project is tested on 18 only; I cannot 
    then close Terminal and open a new window; `which psql` should print a path **[V]**.
 7. For Mini Perpetuity, set `MP_ADMIN_DSN='postgresql://localhost/postgres'` when you run admin commands, and `pg_bin_dir = "/Applications/Postgres.app/Contents/Versions/latest/bin"` in an instance's config for backups (the folder comes from the PATH command above **[V]**; the exact DSN is **[Inference]**: libpq uses your OS user name when none is given, which I did not re-read in this session).
 
-**What this means for security (backlog MB14).** Postgres.app runs as *you* and its default login has no password. So anything that runs as your Mac user can connect to the server as its superuser and bypass the app's approval rules. The approver design (ADR-M6b) is built to stop an AI or script that uses the everyday role, not software that attacks your own Mac account. Separating that needs the server under another account; not done.
+**What this means for security (backlog MB14). Do this before approving anything.** Postgres.app's own page says PostgreSQL "accepts connections from apps on your computer without a password" by default, called the "trust" method, and that Postgres.app 2.7 and later asks once per client app before letting it in <https://postgresapp.com/documentation/app-permissions.html> **[V]**. With trust, PostgreSQL accepts **any** password for the approver role, so the typed approver password would protect nothing. `mp doctor` detects this (it tries a wrong password) and `mp approve` refuses until it is fixed.
+
+To fix it, make PostgreSQL check passwords for this project's roles only (your own superuser login keeps working as before):
+1. As the admin run `psql -h localhost -c "SHOW hba_file;"` to find the login-rule file **[V: `hba_file` is a documented setting]**.
+2. Open that file in a text editor and add these two lines **above every other `host` line** (the first matching line wins, with no fall-through **[V: PostgreSQL 18 documentation, `pg_hba.conf`]**; a user name starting with `/` is a regular expression, shown there for database names and tested here for user names **[V]**):
+   ```
+   host  all  /^mp_.*_(app|approver)$  127.0.0.1/32  scram-sha-256
+   host  all  /^mp_.*_(app|approver)$  ::1/128       scram-sha-256
+   ```
+3. Reload: `psql -h localhost -c "SELECT pg_reload_conf();"` **[V]**. Then run `mp doctor`; "password login" should say ok.
+I could not check where Postgres.app keeps this file or whether it overwrites edits on update **[U]**; `SHOW hba_file;` tells you the path, and `mp doctor` will tell you if it ever stops working.
+
+Anything running as your Mac user can still act as the database superuser (that login stays passwordless). The approver design stops an AI or script that uses the everyday role, not software attacking your own Mac account.
 
 Other Mac options exist (the EDB interactive installer, Homebrew `brew install postgresql@18`-style packages, MacPorts, Fink) **[V: listed on postgresql.org]**; I have not checked their steps. Do not install more than one.
 

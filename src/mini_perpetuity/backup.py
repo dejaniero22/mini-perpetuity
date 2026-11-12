@@ -23,7 +23,7 @@ import pyrage
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from pyrage import x25519
 
-from mini_perpetuity.config import Config, db_name, validate_name
+from mini_perpetuity.config import Config, db_name, toml_string, validate_name
 from mini_perpetuity.db import app_connect, verify_instance
 from mini_perpetuity.ledger import append_event
 
@@ -32,6 +32,10 @@ TABLES_EXPECTED = ("events", "instance_meta", "memory_objects", "schema_migratio
 
 class BackupError(Exception):
     pass
+
+
+def setup_hint(instance: str) -> str:
+    return f"mp admin backup-setup {instance} --backup-dir DIR --key-file FILE"
 
 
 @dataclass(frozen=True)
@@ -133,8 +137,7 @@ def backup_name(instance: str, when: datetime) -> str:
 def make_backup(cfg: Config, *, now: datetime | None = None) -> Backup:
     if cfg.backup_dir is None or not cfg.backup_recipients:
         raise BackupError(
-            f"backups are not set up for {cfg.instance!r}: "
-            f"run `mp admin backup-setup {cfg.instance} --dir DIR`"
+            f"backups are not set up for {cfg.instance!r}: run `{setup_hint(cfg.instance)}`"
         )
     pg_dump = pg_tool(cfg.pg_bin_dir, "pg_dump")
     with app_connect(cfg) as conn:
@@ -280,5 +283,8 @@ def setup_backup(config_file: Path, backup_dir: Path, key_file: Path) -> str:
     backup_dir.chmod(0o700)
     recipient = str(identity.to_public())
     with config_file.open("a") as f:
-        f.write(f'\nbackup_dir = "{backup_dir}"\nbackup_recipients = ["{recipient}"]\n')
+        f.write(
+            f"\nbackup_dir = {toml_string(backup_dir)}\n"
+            f"backup_recipients = [{toml_string(recipient)}]\n"
+        )
     return recipient

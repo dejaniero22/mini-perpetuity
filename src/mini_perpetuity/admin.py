@@ -12,7 +12,15 @@ import psycopg
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
-from mini_perpetuity.config import ConfigError, approver_name, db_name, role_name, validate_name
+from mini_perpetuity.config import (
+    ConfigError,
+    approver_name,
+    db_name,
+    role_name,
+    toml_string,
+    validate_name,
+)
+from mini_perpetuity.db import LoginCheck, check_password_enforced
 
 
 class InitError(Exception):
@@ -35,8 +43,8 @@ def _write_files(
     _write_private(pw_path, password + "\n")
     _write_private(
         toml_path,
-        f'instance = "{name}"\nhost = "{host}"\nport = {port}\n'
-        f'password_file = "{pw_path}"\ndata_policy = "synthetic_only"\n',
+        f"instance = {toml_string(name)}\nhost = {toml_string(host)}\nport = {port}\n"
+        f'password_file = {toml_string(pw_path)}\ndata_policy = "synthetic_only"\n',
     )
 
 
@@ -166,11 +174,13 @@ def check_approver_password(password: str) -> None:
         raise InitError("the approver password is too repetitive")
 
 
-def set_approver_password(admin_dsn: str, name: str, password: str) -> None:
+def set_approver_password(admin_dsn: str, name: str, password: str) -> LoginCheck:
     """Give an instance's approver role its password (and let it log in).
 
     The password is hashed here (SCRAM-SHA-256) and only the hash is sent, so it never appears in
     a SQL statement or a server log. It is not stored anywhere by this tool.
+
+    Returns whether PostgreSQL really checks the password (a wrong one must be refused).
     """
     try:
         validate_name(name)
@@ -192,3 +202,5 @@ def set_approver_password(admin_dsn: str, name: str, password: str) -> None:
                 sql.Identifier(role), sql.Literal(verifier)
             )
         )
+        host, port = admin.info.host, admin.info.port
+    return check_password_enforced(host, port, db_name(name), role)

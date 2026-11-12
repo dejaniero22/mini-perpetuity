@@ -45,17 +45,21 @@ def test_missing_approver_and_backups_are_warnings_with_a_fix(make_instance: Mak
 
 
 def test_no_backup_yet_and_stale_backup(make_instance: Make, configure_backup: Configure) -> None:
+    from datetime import UTC, datetime, timedelta
+
     from mini_perpetuity.backup import make_backup
 
     cfg, _ = configure_backup(make_instance())
     assert cfg.backup_dir is not None
     cfg.backup_dir.mkdir(mode=0o700)
     assert by_name(run_doctor(cfg))["last backup"].status == "warn"
-    made = make_backup(cfg)
-    old = time.time() - 8 * 86400
-    os.utime(made.path, (old, old))
+    made = make_backup(cfg, now=datetime.now(UTC) - timedelta(days=8))
     stale = by_name(run_doctor(cfg))["last backup"]
     assert stale.status == "warn" and "8.0 days" in stale.detail and stale.fix == "mp backup"
+    # copying or restoring the file changes its file time but not the time in its name
+    now = time.time()
+    os.utime(made.path, (now, now))
+    assert "8.0 days" in by_name(run_doctor(cfg))["last backup"].detail
 
 
 def test_another_instances_backup_does_not_count(
