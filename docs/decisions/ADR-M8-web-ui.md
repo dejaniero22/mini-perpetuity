@@ -11,7 +11,7 @@
 4. **Security:** as secure as possible; "plenty of applications have secure web apps". Admin tasks (create an instance, set the approver password, upgrade, backups) should also be possible in the UI, not left to the terminal.
 5. **Approvals:** typed in the UI. Rio chose this knowing it passes the approver password through the browser (ADR-M6b's terminal-only property is replaced by the controls below).
 6. **Transport:** local **HTTPS** (not plain HTTP on localhost).
-7. **Approval factor:** a **passkey (Touch ID) as well as the typed password**; the password stays as the fallback. See "Passkey approval" for the condition under which this is actually built.
+7. **Approval factor: the typed password only** (Rio, 2026-11-12, replacing the earlier passkey-plus-password choice): not every device has a fingerprint reader and the system must be accessible. No passkey is built; MB16 is withdrawn.
 8. **First version:** search and browse; add and review notes; timeline view; audit log, status and instances.
 9. **Method:** research the current recommended practice from primary sources before building. Done; findings below.
 
@@ -36,7 +36,7 @@ Read from the standards bodies' and projects' own pages or repositories (not sum
 | Playwright for Python 1.63.0 exists on PyPI and matches the Chromium preinstalled in the build sandbox (Node Playwright 1.63.0, Chromium build 1243). `cryptography` 50.0.2 (already installed) supports certificate name constraints. | [PyPI](https://pypi.org/project/playwright/) |
 
 ## Not verified. Treat as open.
-- Whether the PRF extension works with Touch ID on Rio's Mac, in the browsers Rio uses (MDN's support table is rendered by JavaScript and could not be read; secondary sources disagreed). **MB16.**
+- Whether the PRF extension works with Touch ID on Rio's Mac, in the browsers Rio uses (MDN's support table is rendered by JavaScript and could not be read; secondary sources disagreed). **MB16 (withdrawn: password only).**
 - How macOS and each browser handle a locally generated certificate authority (and whether Safari, Chrome and Firefox all accept it). **MB17.**
 - Whether a least-privilege setup role (create databases and roles, not superuser) can run this repository's migrations and `init-instance`, and whether a read-only backup role can run `pg_dump`. **MB18.**
 - Whether `<instance>.localhost` names resolve to the loopback address in every browser Rio uses. **MB19.**
@@ -67,7 +67,7 @@ Read from the standards bodies' and projects' own pages or repositories (not sum
 
 **Approvals (decision 5, 7).**
 - **Typed approver password:** a form POST over HTTPS; paste and password managers are **permitted** (ASVS 6.2.7, WCAG 3.3.8), so "stored nowhere" now means "this system never stores it", not "you may not store it". The server uses it for one batch (one transaction, as in M6b) and discards it: never logged, never in a URL, never kept in a session, generic error messages, and server-side attempt limits with lockout (ASVS 6.3.1) in addition to the 16-character minimum. An extension in the browser could still read the field; the README recommends a separate browser profile without extensions for this UI.
-- **Passkey approval, conditional:** a passkey is built **only if it can unlock the approver credential itself**. Design: the approver password is wrapped with a key derived from the passkey's PRF output, so what is stored is useless without the authenticator. If the server instead held a usable approver credential after a passkey tap, anything running as Rio's OS user could skip the UI and use it, which would undo ADR-M6b. So: a **spike on Rio's Mac** (MB16) decides. If PRF is not available there, passkeys are not built, and the password remains the only approval factor. (If it works, it also gives WCAG's "alternative method" and ASVS L3's hardware factor.)
+- **No passkey (decision 7).** The typed password is the only approval factor, so everything above about unlocking a credential with a passkey no longer applies; the research notes on PRF are kept only as background.
 
 **Admin tasks in the UI (decision 4).** Creating an instance, setting the approver password, upgrading and backups happen in the UI through **least-privilege roles, never a stored superuser**: a setup role (create databases and roles) and a backup role (read-only), each unlocked by a fresh confirmation for every action (ASVS 7.5.3). The UI process never holds the PostgreSQL superuser login. **This depends on MB18.** Until it is verified, these tasks stay in the terminal and the UI says so.
 
@@ -88,7 +88,7 @@ Read from the standards bodies' and projects' own pages or repositories (not sum
 ## Order of work
 1. Accept this ADR (merge).
 2. **M7** (`mp doctor`, backups), built so the UI can call it.
-3. **M8 spikes** on Rio's Mac, small and scripted: MB16 (PRF), MB17 (certificate trust), MB18 (least-privilege roles), MB19 (`*.localhost`).
+3. **M8 spikes** on Rio's Mac, small and scripted: MB17 (certificate trust), MB18 (least-privilege roles), MB19 (`*.localhost`).
 4. **M8a** the secure shell (HTTPS, headers, session, request protection, tests); then **M8b** the four screens.
 5. Real use through the UI.
 
@@ -99,4 +99,4 @@ Read from the standards bodies' and projects' own pages or repositories (not sum
 - This ADR can be wrong where it rests on unverified items; those are the spikes, and the plan changes if a spike fails.
 
 ## Spike status (2026-11-12)
-Results and the steps for Rio's Mac are in [docs/spikes/M8-spikes.md](../spikes/M8-spikes.md). So far: MB18 holds on Linux (a separate backup role is not needed; the setup role owns the tables and must be unlocked per action); MB16, MB17 and MB19 are verified only in headless Chromium on Linux and remain open for Rio's Mac. This ADR's status does not change until those results are in.
+Results are in [docs/spikes/M8-spikes.md](../spikes/M8-spikes.md). MB17 and MB19 are verified in Chrome 157 on Rio's Mac; MB18 holds on Linux (a separate backup role is not needed; the setup role owns the tables and must be unlocked per action). MB16 is withdrawn. Still open: Safari, Firefox and Windows for MB17/MB19, MB18 on Rio's PostgreSQL, and whether Windows must be supported at all.

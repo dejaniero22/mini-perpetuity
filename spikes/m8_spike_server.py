@@ -1,4 +1,4 @@
-"""M8 spike server: one local HTTPS page that answers MB16, MB17 and MB19 on your own Mac.
+"""M8 spike server: one local HTTPS page that answers MB17 and MB19 on your own Mac.
 
     uv run python spikes/m8_spike_server.py
 
@@ -170,17 +170,11 @@ HTML = """<!doctype html>
 <link rel="stylesheet" href="/spike.css"></head>
 <body><main>
 <h1>M8 spike <span id="where"></span></h1>
-<p>Nothing here is stored or sent anywhere. Each section fills in by itself or has one button.
+<p>Nothing here is stored or sent anywhere. It fills in by itself.
 When done, press <b>Show report</b> and copy the text back to Claude. Do this in each browser
 you use, on each of these addresses: <span id="links"></span></p>
 <section><h2>MB17 / MB19: you can read this page</h2>
 <p id="basic">checking&hellip;</p></section>
-<section><h2>MB16: passkey with PRF (Touch ID)</h2>
-<p>Creates a <b>test</b> passkey for this address and asks for it twice. Delete it afterwards
-(Passwords app or browser settings: &ldquo;Mini Perpetuity spike&rdquo;).</p>
-<button id="create">1. Create test passkey</button>
-<button id="use">2. Use it (asks for Touch ID 3 times)</button>
-<p id="prf" role="status"></p></section>
 <section><h2>Report</h2><button id="report">Show report</button>
 <textarea id="out" rows="14" readonly aria-label="Report to copy"></textarea></section>
 </main><script src="/spike.js"></script></body></html>
@@ -196,10 +190,6 @@ JS = r"""
 'use strict';
 const $ = (id) => document.getElementById(id);
 const report = {browser: navigator.userAgent, origin: location.origin};
-const hex4 = async (buf) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', buf))]
-  .slice(0, 4).map((x) => x.toString(16).padStart(2, '0')).join('');
-const rnd = (n) => crypto.getRandomValues(new Uint8Array(n));
-const salt = (s) => new TextEncoder().encode(s);
 const label = location.hostname.split('.')[0];
 $('where').textContent = '(' + location.host + ')';
 const names = (document.cookie || '').split(';').map((c) => c.split('=')[0].trim()).filter(Boolean);
@@ -210,10 +200,8 @@ try {
   document.cookie = '__Host-spike-' + label + '=1; Secure; Path=/; SameSite=Strict';
   report.hostCookieWorks = document.cookie.includes('__Host-spike-' + label + '=1');
 } catch (e) { report.hostCookieWorks = 'error: ' + e.name; }
-report.webauthnAvailable = !!(window.PublicKeyCredential && navigator.credentials);
 $('basic').textContent = 'Loaded over ' + location.protocol + ' at ' + location.host
-  + '; secure context: ' + isSecureContext + '; __Host- cookie: ' + report.hostCookieWorks
-  + '; WebAuthn: ' + report.webauthnAvailable;
+  + '; secure context: ' + isSecureContext + '; __Host- cookie: ' + report.hostCookieWorks;
 const port = location.port ? ':' + location.port : '';
 $('links').replaceChildren(...['personal', 'work', 'test', ''].flatMap((n) => {
   const a = document.createElement('a');
@@ -221,48 +209,6 @@ $('links').replaceChildren(...['personal', 'work', 'test', ''].flatMap((n) => {
   a.textContent = (n ? n + '.' : '') + 'localhost';
   return [a, document.createTextNode('  ')];
 }));
-let credId = null;
-$('create').addEventListener('click', async () => {
-  try {
-    const cred = await navigator.credentials.create({publicKey: {
-      challenge: rnd(32), rp: {name: 'Mini Perpetuity spike', id: location.hostname},
-      user: {id: rnd(16), name: 'spike', displayName: 'Mini Perpetuity spike (delete me)'},
-      pubKeyCredParams: [{type: 'public-key', alg: -7}, {type: 'public-key', alg: -257}],
-      authenticatorSelection: {residentKey: 'preferred', userVerification: 'required'},
-      extensions: {prf: {eval: {first: salt('mp-spike-1')}}}, timeout: 60000}});
-    const ext = cred.getClientExtensionResults();
-    credId = cred.rawId;
-    report.prfCreate = {enabled: ext.prf ? ext.prf.enabled : 'extension missing',
-      outputOnCreate: !!(ext.prf && ext.prf.results && ext.prf.results.first),
-      attachment: cred.authenticatorAttachment || 'unknown'};
-    $('prf').textContent = 'Created. prf.enabled = ' + report.prfCreate.enabled;
-  } catch (e) {
-    report.prfCreate = {error: e.name + ': ' + e.message};
-    $('prf').textContent = e.name;
-  }
-});
-const getPrf = async (s) => {
-  const a = await navigator.credentials.get({publicKey: {
-    challenge: rnd(32), rpId: location.hostname, userVerification: 'required',
-    allowCredentials: [{type: 'public-key', id: credId}],
-    extensions: {prf: {eval: {first: salt(s)}}}, timeout: 60000}});
-  const r = a.getClientExtensionResults().prf;
-  return r && r.results && r.results.first ? hex4(r.results.first) : null;
-};
-$('use').addEventListener('click', async () => {
-  if (!credId) { $('prf').textContent = 'Create the passkey first.'; return; }
-  try {
-    const a = await getPrf('mp-spike-1');
-    const b = await getPrf('mp-spike-1');
-    const c = await getPrf('mp-spike-2');
-    report.prfGet = {outputReturned: a !== null, sameSaltSameOutput: a !== null && a === b,
-      otherSaltDifferent: c !== null && c !== a};
-    $('prf').textContent = JSON.stringify(report.prfGet);
-  } catch (e) {
-    report.prfGet = {error: e.name + ': ' + e.message};
-    $('prf').textContent = e.name;
-  }
-});
 $('report').addEventListener('click', () => {
   $('out').value = JSON.stringify(report, null, 2); $('out').select();
 });
