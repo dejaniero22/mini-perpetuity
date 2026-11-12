@@ -133,6 +133,7 @@ def test_init_cleans_up_on_failure(
     with psycopg.connect(admin_dsn) as c:
         row = c.execute(
             "SELECT (SELECT count(*) FROM pg_database WHERE datname = 'mp_tfail1') "
-            "+ (SELECT count(*) FROM pg_roles WHERE rolname = 'mp_tfail1_app')"
+            "+ (SELECT count(*) FROM pg_roles "
+            "WHERE rolname IN ('mp_tfail1_app', 'mp_tfail1_approver'))"
         ).fetchone()
     assert row == (0,)

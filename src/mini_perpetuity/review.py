@@ -1,6 +1,7 @@
 """The owner's side of quarantine: list, approve, reject (INV-12). Callers commit.
 
-Human CLI only. The MCP server must never import this module (a test enforces it).
+Human CLI only. The MCP server must never import this module (a test enforces it). `decide` must
+be called on the approver's connection: the database refuses any other role (ADR-M6b).
 """
 
 import psycopg
@@ -20,6 +21,17 @@ MAX_REASON_CHARS = 500
 
 class ReviewError(ValueError):
     pass
+
+
+def check_reason(reason: str | None) -> str:
+    """Validate a rejection reason (it goes into the permanent ledger)."""
+    text = (reason or "").strip()
+    if not text:
+        raise ReviewError("a reason is required to reject a proposal")
+    if len(text) > MAX_REASON_CHARS:
+        raise ReviewError(f"reason is longer than {MAX_REASON_CHARS} characters")
+    check_text(text)
+    return text
 
 
 def list_proposals(conn: Conn, cfg: Config, request: Request) -> list[Memory]:
@@ -48,12 +60,7 @@ def decide(
     if memory_id < 1:
         raise ReviewError("id must be a positive integer")
     if not approve:
-        reason = (reason or "").strip()
-        if not reason:
-            raise ReviewError("a reason is required to reject a proposal")
-        if len(reason) > MAX_REASON_CHARS:
-            raise ReviewError(f"reason is longer than {MAX_REASON_CHARS} characters")
-        check_text(reason)  # the ledger is permanent
+        reason = check_reason(reason)
     row = (
         conn.cursor(row_factory=class_row(Memory))
         .execute(f"SELECT {COLS} FROM memory_objects WHERE id = %s FOR UPDATE", (memory_id,))  # noqa: S608

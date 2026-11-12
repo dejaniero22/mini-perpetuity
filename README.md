@@ -19,10 +19,14 @@ export MP_ADMIN_DSN='postgresql://<admin-user>@localhost:5432/postgres'
 uv run mp admin init-instance test
 ```
 
-This creates database `mp_test` and role `mp_test_app`, revokes `PUBLIC` access, and writes `~/.config/mini-perpetuity/test.toml` and `test.pw` (both mode `0600`). Then check it:
+This creates database `mp_test` and two roles, revokes `PUBLIC` access, and writes `~/.config/mini-perpetuity/test.toml` and `test.pw` (both mode `0600`):
+
+- `mp_test_app`: the everyday role (its password is in `test.pw`). It can read, create **pending** memory and write audit events. It can never make memory trusted.
+- `mp_test_approver`: the only role that can approve or reject. It cannot log in until you give it a password that **you type and nothing stores**:
 
 ```bash
-MP_CONFIG=~/.config/mini-perpetuity/test.toml uv run mp status
+uv run mp admin set-approver test      # asks twice; at least 16 characters (four or five random words is easy and strong)
+MP_CONFIG=~/.config/mini-perpetuity/test.toml uv run mp status     # shows approver=set
 ```
 
 After upgrading the code, bring an existing instance up to date (idempotent; admin connection only):
@@ -31,13 +35,17 @@ After upgrading the code, bring an existing instance up to date (idempotent; adm
 uv run mp admin migrate test
 ```
 
-Add a memory (a human decision or a source record; text that looks like an SSN or a secret is refused):
+Add, review and approve (text that looks like an SSN or a secret is refused):
 
 ```bash
 export MP_CONFIG=~/.config/mini-perpetuity/test.toml
-uv run mp add --type human_decision --content "Use PostgreSQL for storage."
+uv run mp add --type human_decision --content "Use PostgreSQL for storage."      # asks for nothing
 uv run mp add --type source_record --content "Retention is 7 years" --source "policy X, section Y" --valid-at 2024-01-01T00:00:00+00:00
+uv run mp review                    # everything pending: your notes and any AI proposals
+uv run mp approve 1 2               # shows what you are approving, then asks for the approver password, once
 ```
+
+`mp add` stores a **pending** note, so adding is instant. A note is searchable only after you approve it. `mp approve` takes several ids at once (or `--all`), shows each item, asks for the password once, and approves them all in one step or none. There is deliberately no "approve everything of mine" option: the author label on a pending item is just text, and approving it blind would turn your password into a rubber stamp.
 
 Search what you have stored (approved, currently valid memory only):
 
@@ -122,19 +130,24 @@ Tested here: the exact command above (absolute `mp`, `serve --client --config`, 
 - Limits: 60 requests per minute per client; denied requests are capped at 20 per minute per instance, after which they are refused but no longer recorded.
 - Everything a client searches for is recorded in the permanent ledger.
 
-## Review what AI clients propose
+## Review and approve
 
-A client's `propose_memory` tool stores a note as a quarantined **proposal**: it is invisible to search and to every client, including the one that wrote it, until you approve it. Only you can decide, with the CLI:
+Everything that becomes trusted memory goes through one step you control. Your own notes (`mp add`) and AI proposals (`propose_memory`) both start **pending**: invisible to search and to every client, including the one that wrote them. You decide with the CLI:
 
 ```bash
-uv run mp review                                   # lists pending proposals (AI-written text is shown after "|")
-uv run mp approve 7                                # it becomes searchable; it stays attributed to the client
-uv run mp reject 8 --reason "that is not what I decided"
+uv run mp review                                          # pending items; stored text is shown after "|"
+uv run mp approve 3 4 5                                   # one password prompt for the whole batch
+uv run mp reject 6 7 --reason "that is not what I decided"
 ```
 
-A proposal is an `ai_inference` or a `summary`, must name its source (`derived_from`), is at most 2,000 characters, and a client can have at most 50 waiting. Your decision and your reason are recorded in the ledger (`human_decision`). Read proposals before approving: the tool cannot tell a wrong note from a right one.
+- The **approver password** is typed at a terminal. It is never read from a file, an argument, an environment variable, a pipe, or the MCP server, and it is stored nowhere (the database keeps only a hash). If you lose it: `mp admin set-approver NAME` resets it.
+- Your decision and reason are recorded in the ledger (`human_decision`), and only the approver role can write that event.
+- An AI proposal is an `ai_inference` or a `summary`, must name its source (`derived_from`), is at most 2,000 characters, and a client can have at most 50 waiting. Approval does not change who wrote it: it stays attributed to the client.
+- Read what you approve: the tool cannot tell a wrong note from a right one.
 
-**Limit:** the quarantine protects against what a client can do through the MCP server. A client that can run shell commands as your OS user could still approve its own proposal with plain SQL (details: [ADR-M6](docs/decisions/ADR-M6-write-back.md)).
+**What this protects.** The database itself refuses to let the everyday role (the MCP server, `mp search`, `mp add`, a script, or any AI that merely runs commands as you) approve anything, create trusted memory, change a status, or write a `human_decision` event. Only the approver role can, and its password exists only in your head.
+
+**What it does not protect.** It raises the bar; it is not a wall against something that actively attacks your own machine setup. Anything running as your OS user could edit the `mp` code or your shell startup files to capture the password the next time you type it, or, where PostgreSQL runs as your user, change PostgreSQL's own configuration or files. For that you would need PostgreSQL or the approval step under a different OS user or on another machine. It also does not protect confidentiality: the everyday role can still read everything in an instance, `sensitive` objects included. Details: [ADR-M6b](docs/decisions/ADR-M6b-approver-role.md).
 
 ## Data rules
 
@@ -152,7 +165,8 @@ A proposal is an `ai_inference` or a `summary`, must name its source (`derived_f
 | M3 | Memory objects (bi-temporal, provenance), `mp add` | done |
 | M4 | Retrieval: full-text search, default-deny authorization, audit, `mp search` | done |
 | M5 | MCP server (stdio), per-client principals, rate limits | done |
-| M6 | Write-back with quarantine: `propose_memory`, `mp review`/`approve`/`reject` | in review |
+| M6 | Write-back with quarantine: `propose_memory`, `mp review`/`approve`/`reject` | done |
+| M6b | Stronger approval: separate approver role, password typed once per batch | in review |
 | M7 | Daily use: `mp doctor`, backups | planned |
 
 Open verification items: [docs/verification-backlog.md](docs/verification-backlog.md).
@@ -165,7 +179,7 @@ Open verification items: [docs/verification-backlog.md](docs/verification-backlo
 | `CLAUDE.md` | Instructions for the AI coding assistant |
 | `SECURITY.md` | Security notes and reporting |
 | `CHANGELOG.md` | Keep a Changelog, one entry per step |
-| `src/mini_perpetuity/` | `config.py` (loader), `admin.py` (instance creation, migrations), `db.py`, `ledger.py` (append-only events), `memory.py` (bi-temporal objects), `search.py` (retrieval), `authz.py` (default-deny gate), `access.py` (gate + rate limits), `mcp_server.py` (MCP server), `propose.py` / `review.py` (write-back and the owner's decisions), `seatbelt.py`, `cli.py`, `migrations/` |
+| `src/mini_perpetuity/` | `config.py` (loader), `admin.py` (instance creation, migrations), `db.py`, `ledger.py` (append-only events), `memory.py` (bi-temporal objects), `search.py` (retrieval), `authz.py` (default-deny gate), `access.py` (gate + rate limits), `mcp_server.py` (MCP server), `propose.py` / `review.py` (write-back and the owner's decisions; `db.py` holds the approver connection), `seatbelt.py`, `cli.py`, `migrations/` |
 | `tests/` | Config, instance-isolation, ledger, memory, search, authorization, rate-limit, quarantine and MCP contract tests (real PostgreSQL), hook tests |
 | `pyproject.toml`, `uv.lock` | Pinned project and dependencies |
 | `docs/plan/` | The build plan |

@@ -1,12 +1,10 @@
 """Retrieval tests against a real PostgreSQL (MP_ADMIN_DSN). CI runs these on PostgreSQL 18."""
 
-import os
-import subprocess
-import sys
 from collections.abc import Callable
 
 import psycopg
 import pytest
+from helpers import TEST_APPROVER_PASSWORD, run_cli, trusted_connect
 from psycopg.conninfo import make_conninfo
 
 from mini_perpetuity.admin import migrate_instance
@@ -48,7 +46,7 @@ def add(cfg: Config, content: str, **kw: object) -> int:
         "status": "approved",
     }
     args.update(kw)
-    with app_connect(cfg) as c:
+    with trusted_connect(cfg) as c:  # approved memory can only be created by the approver
         return add_object(c, cfg, content=content, **args)  # type: ignore[arg-type]
 
 
@@ -122,7 +120,7 @@ def test_only_approved_current_versions_come_back(make_instance: Make, admin_dsn
 def test_expired_versions_only_in_history(make_instance: Make) -> None:
     cfg = make_instance()
     v1 = add(cfg, "alpha beta")
-    with app_connect(cfg) as c:
+    with trusted_connect(cfg) as c:  # a correction creates trusted memory: approver only
         v2 = correct_object(c, cfg, v1, agent="human:test", activity="test", content="alpha gamma")
     assert search(cfg, "beta") == []
     assert search(cfg, "beta", history=True) == [v1]
@@ -135,10 +133,11 @@ def test_unapproved_versions_cannot_be_superseded(make_instance: Make, admin_dsn
     """So history can never surface unapproved text: 'superseded' implies 'was approved'."""
     cfg = make_instance()
     pid = admin_insert(admin_dsn, cfg, "proposed thing", "proposed")
-    with app_connect(cfg) as c:
+    with trusted_connect(cfg) as c:
         with pytest.raises(ValueError, match="only approved objects can be corrected"):
             correct_object(c, cfg, pid, agent="human:test", activity="test", content="x")
-    with app_connect(cfg) as c, pytest.raises(psycopg.errors.RestrictViolation):
+    # Even the approver (the only role allowed to update) cannot supersede a proposal.
+    with trusted_connect(cfg) as c, pytest.raises(psycopg.errors.RestrictViolation):
         c.execute(
             "UPDATE memory_objects SET expired_at = now(), status = 'superseded' WHERE id = %s",
             (pid,),
@@ -293,26 +292,21 @@ def test_migrate_adds_search_to_an_existing_instance(make_instance: Make, admin_
     assert search(cfg, "postgresql") == [a]  # existing rows are searchable after the upgrade
 
 
-def run_cli(cfg: Config, *args: str) -> subprocess.CompletedProcess[str]:
-    env = {"MP_CONFIG": str(cfg.password_file.with_suffix(".toml")), "PATH": os.environ["PATH"]}
-    return subprocess.run(
-        [sys.executable, "-m", "mini_perpetuity", *args], env=env, capture_output=True, text=True
-    )
-
-
 def test_cli_search(make_instance: Make) -> None:
     cfg = make_instance()
-    run_cli(cfg, "add", "--type", "human_decision", "--content", "Use PostgreSQL for storage.")
-    run_cli(
-        cfg, "add", "--type", "human_decision", "--content", "PostgreSQL is also the search engine"
-    )
+    for content in ("Use PostgreSQL for storage.", "PostgreSQL is also the search engine"):
+        added = run_cli(cfg, "add", "--type", "human_decision", "--content", content)
+        assert added.returncode == 0 and "pending" in added.stdout  # no password needed to add
+    assert "0 result(s)" in run_cli(cfg, "search", "postgresql").stdout  # pending: not searchable
+    approved = run_cli(cfg, "approve", "--all", passwords=[TEST_APPROVER_PASSWORD])
+    assert approved.returncode == 0 and "approved #1, #2" in approved.stdout
     r = run_cli(cfg, "search", "postgresql")
     assert r.returncode == 0 and "2 result(s)" in r.stdout
     assert "human_decision  approved" in r.stdout and "    Use PostgreSQL for storage." in r.stdout
     assert "1 result(s)" in run_cli(cfg, "search", "postgresql", "--limit", "1").stdout
     r = run_cli(cfg, "search", "nothing matches", "--history")
     assert r.returncode == 0 and "0 result(s)" in r.stdout
-    assert len(events(cfg, "memory.search")) == 3
+    assert len(events(cfg, "memory.search")) == 4
 
 
 @pytest.mark.parametrize(

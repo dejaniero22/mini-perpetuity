@@ -12,7 +12,7 @@ import psycopg
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
-from mini_perpetuity.config import ConfigError, db_name, role_name, validate_name
+from mini_perpetuity.config import ConfigError, approver_name, db_name, role_name, validate_name
 
 
 class InitError(Exception):
@@ -45,8 +45,13 @@ def _migrations() -> list[tuple[str, str]]:
     return sorted((p.name, p.read_text()) for p in d.iterdir() if p.name.endswith(".sql"))
 
 
-def apply_migrations(c: psycopg.Connection[tuple[object, ...]], role: str) -> list[str]:
-    """Apply unrecorded migrations, one transaction each; {app_role} in SQL becomes the app role."""
+def apply_migrations(
+    c: psycopg.Connection[tuple[object, ...]], role: str, approver: str
+) -> list[str]:
+    """Apply unrecorded migrations, one transaction each.
+
+    In the SQL, {app_role} and {approver_role} become identifiers and {approver_literal} a string.
+    """
     c.execute(
         "CREATE TABLE IF NOT EXISTS schema_migrations "
         "(version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())"
@@ -57,7 +62,10 @@ def apply_migrations(c: psycopg.Connection[tuple[object, ...]], role: str) -> li
         if version in done:
             continue
         with c.transaction():
-            c.execute(body.replace("{app_role}", sql.Identifier(role).as_string(c)))
+            body = body.replace("{app_role}", sql.Identifier(role).as_string(c))
+            body = body.replace("{approver_role}", sql.Identifier(approver).as_string(c))
+            body = body.replace("{approver_literal}", sql.Literal(approver).as_string(c))
+            c.execute(body)
             c.execute("INSERT INTO schema_migrations (version) VALUES (%s)", (version,))
         applied.append(version)
     return applied
@@ -73,7 +81,7 @@ def migrate_instance(admin_dsn: str, name: str) -> list[str]:
         row = c.execute("SELECT instance FROM instance_meta").fetchone()
         if row is None or row[0] != name:
             raise InitError(f"database {db_name(name)} does not belong to instance {name!r}")
-        return apply_migrations(c, role_name(name))
+        return apply_migrations(c, role_name(name), approver_name(name))
 
 
 def _drop(admin_dsn: str, name: str) -> None:
@@ -81,7 +89,8 @@ def _drop(admin_dsn: str, name: str) -> None:
         c.execute(
             sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(db_name(name)))
         )
-        c.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role_name(name))))
+        for role in (role_name(name), approver_name(name)):
+            c.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)))
 
 
 def init_instance(admin_dsn: str, name: str, config_dir: Path) -> Path:
@@ -98,8 +107,8 @@ def init_instance(admin_dsn: str, name: str, config_dir: Path) -> Path:
     with psycopg.connect(admin_dsn, autocommit=True) as admin:
         taken = admin.execute(
             "SELECT (SELECT count(*) FROM pg_database WHERE datname = %s) "
-            "+ (SELECT count(*) FROM pg_roles WHERE rolname = %s)",
-            (db, role),
+            "+ (SELECT count(*) FROM pg_roles WHERE rolname IN (%s, %s))",
+            (db, role, approver_name(name)),
         ).fetchone()
         if taken is None or taken[0]:
             raise InitError(f"database {db} or role {role} already exists; refusing to reuse")
@@ -128,7 +137,7 @@ def init_instance(admin_dsn: str, name: str, config_dir: Path) -> Path:
             c.execute("REVOKE ALL ON SCHEMA public FROM PUBLIC")
             c.execute(sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(ident_role))
             c.execute("ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC")
-            apply_migrations(c, role)
+            apply_migrations(c, role, approver_name(name))
             c.execute("INSERT INTO instance_meta (instance) VALUES (%s)", (name,))
             c.execute(
                 sql.SQL("GRANT SELECT ON instance_meta, schema_migrations TO {}").format(ident_role)
@@ -141,3 +150,45 @@ def init_instance(admin_dsn: str, name: str, config_dir: Path) -> Path:
             p.unlink(missing_ok=True)
         raise
     return toml_path
+
+
+MIN_APPROVER_PASSWORD = 16
+
+
+def check_approver_password(password: str) -> None:
+    """Refuse weak approver passwords: online guessing is the main attack on a typed secret."""
+    if len(password) < MIN_APPROVER_PASSWORD:
+        raise InitError(
+            f"the approver password must be at least {MIN_APPROVER_PASSWORD} characters "
+            "(a passphrase of four or five random words is easy to type and strong)"
+        )
+    if len(set(password)) < 6:
+        raise InitError("the approver password is too repetitive")
+
+
+def set_approver_password(admin_dsn: str, name: str, password: str) -> None:
+    """Give an instance's approver role its password (and let it log in).
+
+    The password is hashed here (SCRAM-SHA-256) and only the hash is sent, so it never appears in
+    a SQL statement or a server log. It is not stored anywhere by this tool.
+    """
+    try:
+        validate_name(name)
+    except ConfigError as e:
+        raise InitError(str(e)) from e
+    check_approver_password(password)
+    role = approver_name(name)
+    with psycopg.connect(admin_dsn, autocommit=True) as admin:
+        found = admin.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone()
+        if found is None:
+            raise InitError(
+                f"instance {name!r} has no approver role; run `mp admin migrate {name}` first"
+            )
+        verifier = admin.pgconn.encrypt_password(
+            password.encode(), role.encode(), b"scram-sha-256"
+        ).decode()
+        admin.execute(
+            sql.SQL("ALTER ROLE {} LOGIN PASSWORD {}").format(
+                sql.Identifier(role), sql.Literal(verifier)
+            )
+        )

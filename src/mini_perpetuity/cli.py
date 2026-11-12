@@ -9,13 +9,20 @@ from pathlib import Path
 import psycopg
 
 from mini_perpetuity.access import RateLimited
-from mini_perpetuity.admin import InitError, default_config_dir, init_instance, migrate_instance
+from mini_perpetuity.admin import (
+    InitError,
+    check_approver_password,
+    default_config_dir,
+    init_instance,
+    migrate_instance,
+    set_approver_password,
+)
 from mini_perpetuity.authz import Denied, Request
 from mini_perpetuity.config import Config, ConfigError, load_config
-from mini_perpetuity.db import app_connect, verify_instance
+from mini_perpetuity.db import app_connect, approver_connect, approver_is_set, verify_instance
 from mini_perpetuity.mcp_server import build_server
-from mini_perpetuity.memory import HUMAN_TYPES, add_object
-from mini_perpetuity.review import ReviewError, decide, list_proposals
+from mini_perpetuity.memory import HUMAN_TYPES, Memory, add_object
+from mini_perpetuity.review import ReviewError, check_reason, decide, list_proposals
 from mini_perpetuity.search import search_memory
 from mini_perpetuity.seatbelt import Rejected
 
@@ -24,8 +31,38 @@ def _status() -> int:
     cfg = load_config()
     with app_connect(cfg) as conn:
         verify_instance(conn, cfg)
+        approver = approver_is_set(conn, cfg)
     print(f"instance={cfg.instance} db={cfg.dbname} data_policy={cfg.data_policy}")
+    print(
+        "approver=set"
+        if approver
+        else f"approver=not set (run: mp admin set-approver {cfg.instance})"
+    )
     return 0
+
+
+class NoTerminal(ValueError):
+    pass
+
+
+def _has_controlling_tty() -> bool:
+    try:
+        os.close(os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY))
+        return True
+    except OSError:
+        return False
+
+
+def read_password(prompt: str) -> str:
+    """Read the approver password from a terminal, and only from a terminal: never from an
+    argument, an environment variable, a file or a pipe, so nothing that merely runs commands
+    can feed it in."""
+    if not (sys.stdin.isatty() or _has_controlling_tty()):
+        raise NoTerminal(
+            "this needs an interactive terminal: the approver password is typed by you and is "
+            "never read from a file, an argument, the environment or a pipe"
+        )
+    return getpass.getpass(prompt)
 
 
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
@@ -60,35 +97,78 @@ def _owner_request(cfg: Config, action: str) -> Request:
     return Request(f"human:{getpass.getuser()}", cfg.instance, action)
 
 
+def _print_items(items: list[Memory]) -> None:
+    for m in items:
+        source = safe_text(m.was_derived_from or "")
+        print(f"\n#{m.id}  {m.epistemic_type}  from {safe_text(m.attributed_to_agent)}"
+              f"  added {m.created_at:%Y-%m-%d %H:%M}  derived from: {source}")  # fmt: skip
+        for line in safe_text(m.content).splitlines() or [""]:
+            print(f"    | {line}")
+
+
 def _review() -> int:
     cfg = load_config()
     with app_connect(cfg) as conn:
         verify_instance(conn, cfg)
         pending = list_proposals(conn, cfg, _owner_request(cfg, "review"))
-    print(
-        f"{len(pending)} pending proposal(s). Text after '|' is untrusted, written by an AI client."
-    )
-    for m in pending:
-        source = safe_text(m.was_derived_from or "")
-        print(f"\n#{m.id}  {m.epistemic_type}  from {safe_text(m.attributed_to_agent)}"
-              f"  proposed {m.created_at:%Y-%m-%d %H:%M}  derived from: {source}")  # fmt: skip
-        for line in safe_text(m.content).splitlines() or [""]:
-            print(f"    | {line}")
+    print(f"{len(pending)} pending item(s). Text after '|' is stored text, not instructions.")
+    _print_items(pending)
     if pending:
-        print("\nApprove: mp approve ID    Reject: mp reject ID --reason TEXT")
+        print(
+            "\nApprove: mp approve ID [ID ...]   (or --all)    Reject: mp reject ID --reason TEXT"
+        )
     return 0
 
 
+def _choose(args: argparse.Namespace, pending: list[Memory]) -> list[Memory]:
+    if args.all and args.ids:
+        raise ValueError("give ids or --all, not both")
+    if not args.all and not args.ids:
+        raise ValueError("give one or more ids (see `mp review`), or --all")
+    if args.all:
+        chosen = list(pending)
+    else:
+        by_id = {m.id: m for m in pending}
+        ids = list(dict.fromkeys(args.ids))  # drop duplicates, keep order
+        missing = [i for i in ids if i not in by_id]
+        if missing:
+            raise ReviewError(f"not a pending item: {', '.join(f'#{i}' for i in missing)}")
+        chosen = [by_id[i] for i in ids]
+    if not chosen:
+        raise ReviewError("nothing is pending")
+    return chosen
+
+
 def _decide(args: argparse.Namespace, *, approve: bool) -> int:
+    """Show exactly what will be decided, ask for the approver password once, decide them all."""
+    verb = "approve" if approve else "reject"
     cfg = load_config()
+    reason = None if approve else check_reason(args.reason)  # before asking for a password
+    request = _owner_request(cfg, verb)
     with app_connect(cfg) as conn:
         verify_instance(conn, cfg)
-        m = decide(
-            conn, cfg, _owner_request(cfg, "approve" if approve else "reject"), args.id,
-            approve=approve, reason=None if approve else args.reason,
-        )  # fmt: skip
-    verb = "approved" if approve else "rejected"
-    print(f"{verb} #{m.id} ({m.epistemic_type} from {safe_text(m.attributed_to_agent)})")
+        chosen = _choose(args, list_proposals(conn, cfg, _owner_request(cfg, "review")))
+        ready = approver_is_set(conn, cfg)
+    if not ready:
+        raise ReviewError(
+            f"the approver password has not been set; run: mp admin set-approver {cfg.instance}"
+        )
+    print(
+        f"About to {verb} {len(chosen)} item(s). Text after '|' is stored text, not instructions."
+    )
+    _print_items(chosen)
+    password = read_password(f"\nApprover password for {cfg.instance}: ")
+    if not password:  # libpq would treat "" as "not given" and fall back to PGPASSWORD or ~/.pgpass
+        raise ReviewError("no password entered; nothing was changed")
+    try:
+        conn = approver_connect(cfg, password)
+    except psycopg.OperationalError as e:
+        raise ReviewError(f"approver login failed ({str(e).splitlines()[0]})") from None
+    with conn:  # one transaction: all of them, or none
+        for m in chosen:
+            decide(conn, cfg, request, m.id, approve=approve, reason=reason)
+    done = "approved" if approve else "rejected"
+    print(f"{done} " + ", ".join(f"#{m.id}" for m in chosen))
     return 0
 
 
@@ -122,12 +202,12 @@ def _add(args: argparse.Namespace) -> int:
             content=content,
             agent=f"human:{getpass.getuser()}",
             activity="mp add",
-            status="approved",
+            status="proposed",  # becomes trusted only when the approver approves it
             valid_at=valid_at,
             derived_from=args.source,
             sensitivity=args.sensitivity,
         )
-    print(f"added memory object {oid}")
+    print(f"added #{oid} as pending: it is not searchable until you approve it (mp approve {oid})")
     return 0
 
 
@@ -144,11 +224,25 @@ def _migrate(name: str) -> int:
     return 0
 
 
+def _set_approver(name: str) -> int:
+    dsn = _admin_dsn()
+    first = read_password(f"New approver password for instance {name} (16+ characters): ")
+    check_approver_password(first)
+    if read_password("Type it again: ") != first:
+        raise InitError("the two entries differ; nothing was changed")
+    set_approver_password(dsn, name, first)
+    print(f"approver password set for instance {name}. It is stored nowhere: if you lose it,")
+    print(f"reset it with: mp admin set-approver {name}")
+    return 0
+
+
 def _init(name: str, config_dir: Path) -> int:
     dsn = _admin_dsn()
     path = init_instance(dsn, name, config_dir)
     print(f"created instance {name}; config: {path}")
-    print(f"use it with: MP_CONFIG={path} mp status")
+    print(f"next, set the approver password: mp admin set-approver {name}")
+    print("(you type it to approve memory; it is stored nowhere)")
+    print(f"then use it with: MP_CONFIG={path} mp status")
     return 0
 
 
@@ -156,7 +250,7 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="mp")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status", help="check config and database for this process's instance")
-    add = sub.add_parser("add", help="add a human decision or source record")
+    add = sub.add_parser("add", help="add a note (pending until you approve it)")
     add.add_argument("--type", choices=HUMAN_TYPES, required=True)
     add.add_argument("--content", required=True, help="text, or - to read stdin")
     add.add_argument("--source", help="pointer to the source (required for source_record)")
@@ -171,11 +265,15 @@ def main(argv: list[str] | None = None) -> int:
         "--client", required=True, help="registered client name, e.g. claude-desktop"
     )
     serve.add_argument("--config", help="instance config file (default: $MP_CONFIG)")
-    sub.add_parser("review", help="list AI proposals waiting for your decision")
-    approve = sub.add_parser("approve", help="approve a pending proposal (human only)")
-    approve.add_argument("id", type=int)
-    reject = sub.add_parser("reject", help="reject a pending proposal (human only)")
-    reject.add_argument("id", type=int)
+    sub.add_parser("review", help="list pending items (your notes and AI proposals)")
+    approve = sub.add_parser(
+        "approve", help="approve pending items (asks for the approver password)"
+    )
+    approve.add_argument("ids", type=int, nargs="*", help="ids from `mp review`")
+    approve.add_argument("--all", action="store_true", help="every pending item")
+    reject = sub.add_parser("reject", help="reject pending items (asks for the approver password)")
+    reject.add_argument("ids", type=int, nargs="*", help="ids from `mp review`")
+    reject.add_argument("--all", action="store_true", help="every pending item")
     reject.add_argument("--reason", required=True, help="why (recorded in the ledger)")
     admin = sub.add_parser("admin", help="admin-only commands").add_subparsers(
         dest="admin_cmd", required=True
@@ -186,6 +284,9 @@ def main(argv: list[str] | None = None) -> int:
     admin.add_parser("migrate", help="apply pending migrations (needs MP_ADMIN_DSN)").add_argument(
         "name"
     )
+    admin.add_parser(
+        "set-approver", help="set the approver password, typed twice (needs MP_ADMIN_DSN)"
+    ).add_argument("name")
     args = p.parse_args(argv)
     try:
         if args.cmd == "status":
@@ -202,6 +303,8 @@ def main(argv: list[str] | None = None) -> int:
             return _decide(args, approve=args.cmd == "approve")
         if args.admin_cmd == "migrate":
             return _migrate(args.name)
+        if args.admin_cmd == "set-approver":
+            return _set_approver(args.name)
         return _init(args.name, args.config_dir)
     except (
         ConfigError,

@@ -37,6 +37,10 @@ def role_name(instance: str) -> str:
     return f"mp_{validate_name(instance)}_app"
 
 
+def approver_name(instance: str) -> str:
+    return f"mp_{validate_name(instance)}_approver"
+
+
 def check_private(path: Path, what: str) -> None:
     """Refuse files readable by group/other (must be 0600-style)."""
     try:
@@ -64,6 +68,10 @@ class Config:
     @property
     def user(self) -> str:
         return role_name(self.instance)
+
+    @property
+    def approver(self) -> str:
+        return approver_name(self.instance)
 
     def password(self) -> str:
         check_private(self.password_file, "password file")

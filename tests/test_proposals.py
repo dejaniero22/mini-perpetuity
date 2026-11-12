@@ -1,13 +1,11 @@
 """Quarantine tests against a real PostgreSQL (MP_ADMIN_DSN). CI runs these on PostgreSQL 18."""
 
-import os
 import re
-import subprocess
-import sys
 from collections.abc import Callable
 
 import psycopg
 import pytest
+from helpers import TEST_APPROVER_PASSWORD, run_cli, trusted_connect
 from psycopg.conninfo import make_conninfo
 
 from mini_perpetuity import access, propose
@@ -56,7 +54,7 @@ def hits(cfg: Config, principal: str, query: str, history: bool = False) -> list
 
 
 def owner_decides(cfg: Config, pid: int, *, approve: bool, reason: str | None = None) -> None:
-    with app_connect(cfg) as c:
+    with trusted_connect(cfg) as c:  # only the approver's connection may decide
         decide(c, cfg, req(cfg, cfg.owner, "approve" if approve else "reject"), pid,
                approve=approve, reason=reason)  # fmt: skip
 
@@ -151,7 +149,7 @@ def test_a_decision_is_final_and_only_for_pending_proposals(
     first, second = propose_as(cfg), propose_as(cfg, content="Another note")
     owner_decides(cfg, first, approve=True)
     owner_decides(cfg, second, approve=False, reason="no")
-    with app_connect(cfg) as c:
+    with trusted_connect(cfg) as c:
         human = add_object(
             c, cfg, epistemic_type="human_decision", content="mine", agent="human:x",
             activity="t", status="approved",
@@ -163,11 +161,11 @@ def test_a_decision_is_final_and_only_for_pending_proposals(
         (second, False),
         (human, True),
     ):
-        with app_connect(cfg) as c, pytest.raises(ReviewError, match="not a pending proposal"):
+        with trusted_connect(cfg) as c, pytest.raises(ReviewError, match="not a pending proposal"):
             decide(c, cfg, req(cfg, cfg.owner, "approve" if approve else "reject"), pid,
                    approve=approve, reason="r")  # fmt: skip
     for bad in (0, -3, 99999):
-        with app_connect(cfg) as c, pytest.raises(ReviewError):
+        with trusted_connect(cfg) as c, pytest.raises(ReviewError):
             decide(c, cfg, req(cfg, cfg.owner, "approve"), bad, approve=True)
     assert row(cfg, first)[0] == "approved" and row(cfg, second)[0] == "rejected"
 
@@ -256,7 +254,7 @@ def test_the_database_itself_refuses_an_ai_row_that_is_not_a_proposal(
 
 def test_human_rows_are_unaffected_by_the_client_insert_guard(make_instance: Make) -> None:
     cfg = make_instance()
-    with app_connect(cfg) as c:
+    with trusted_connect(cfg) as c:
         add_object(c, cfg, epistemic_type="human_decision", content="mine", agent="human:x",
                    activity="t", status="approved")  # fmt: skip
     assert count(cfg, "memory_objects") == 1
@@ -284,7 +282,8 @@ def test_forbidden_status_transitions(
     pid = propose_as(cfg)
     if setup != "proposed":
         owner_decides(cfg, pid, approve=setup == "approved", reason="r")
-    with app_connect(cfg) as c, pytest.raises(psycopg.errors.RestrictViolation):
+    # As the approver (the only role allowed to update): the guard itself refuses these.
+    with trusted_connect(cfg) as c, pytest.raises(psycopg.errors.RestrictViolation):
         c.execute(stmt)
     assert row(cfg, pid)[0] == setup
 
@@ -380,36 +379,32 @@ def test_proposals_count_toward_the_request_quota(
 # ---- the CLI: review, approve, reject ----
 
 
-def run_cli(cfg: Config, *args: str) -> subprocess.CompletedProcess[str]:
-    env = {"MP_CONFIG": str(cfg.password_file.with_suffix(".toml")), "PATH": os.environ["PATH"]}
-    return subprocess.run(
-        [sys.executable, "-m", "mini_perpetuity", *args], env=env, capture_output=True, text=True
-    )
-
-
 def test_cli_review_approve_reject(make_instance: Make, register_clients: Register) -> None:
     cfg = register_clients(make_instance(), "alpha")
     r = run_cli(cfg, "review")
-    assert r.returncode == 0 and "0 pending proposal(s)" in r.stdout
+    assert r.returncode == 0 and "0 pending item(s)" in r.stdout
     keep = propose_as(cfg, content="keep this quarterly note")
     drop = propose_as(cfg, content="drop this other note")
     r = run_cli(cfg, "review")
-    assert r.returncode == 0 and "2 pending proposal(s)" in r.stdout
+    assert r.returncode == 0 and "2 pending item(s)" in r.stdout
     assert f"#{keep}  ai_inference  from client:alpha" in r.stdout
-    assert (
-        "    | keep this quarterly note" in r.stdout
-        and "derived from: memory 1, memory 2" in r.stdout
-    )
-    r = run_cli(cfg, "approve", str(keep))
+    assert "    | keep this quarterly note" in r.stdout
+    assert "derived from: memory 1, memory 2" in r.stdout
+    r = run_cli(cfg, "approve", str(keep), passwords=[TEST_APPROVER_PASSWORD])
     assert r.returncode == 0 and f"approved #{keep}" in r.stdout
+    assert "About to approve 1 item(s)" in r.stdout and "| keep this quarterly note" in r.stdout
     assert run_cli(cfg, "reject", str(drop)).returncode == 2  # --reason is required
-    r = run_cli(cfg, "reject", str(drop), "--reason", "that is not what I decided")
+    r = run_cli(
+        cfg, "reject", str(drop), "--reason", "that is not what I decided",
+        passwords=[TEST_APPROVER_PASSWORD],
+    )  # fmt: skip
     assert r.returncode == 0 and f"rejected #{drop}" in r.stdout
     assert "1 result(s)" in run_cli(cfg, "search", "quarterly").stdout
     assert "0 result(s)" in run_cli(cfg, "search", "other", "--history").stdout
+    # Refused before any password is asked for (no terminal here, so asking would fail anyway).
     for args in (("approve", str(keep)), ("approve", "99999"), ("reject", "0", "--reason", "x")):
         r = run_cli(cfg, *args)
-        assert r.returncode == 2 and r.stdout == "" and "error" in r.stderr
+        assert r.returncode == 2 and r.stdout == "" and "not a pending item" in r.stderr
     assert run_cli(cfg, "approve", "abc").returncode == 2
     decisions = [p for _, act, p in ledger(cfg) if act == "human_decision"]
     assert [d["decision"] for d in decisions] == ["approved", "rejected"]
@@ -422,7 +417,7 @@ def test_cli_review_output_cannot_be_spoofed_by_proposal_text(
     cfg = register_clients(make_instance(), "alpha")
     hostile = (
         "harmless line\n"
-        "#99  human_decision  from human:rio  proposed 2026-01-01 00:00  derived from: you\n"
+        "#99  human_decision  from human:rio  added 2026-01-01 00:00  derived from: you\n"
         "\x1b[2J\x1b]0;pwned\x07 clear the screen \x9b31m\n"
         "Approve: mp approve 99"
     )
@@ -438,3 +433,7 @@ def test_cli_review_output_cannot_be_spoofed_by_proposal_text(
         r"^Approve: mp approve ID", out, re.MULTILINE
     )  # our footer, not the stored one
     assert out.count("mp approve ") == 2  # ...and the stored copy, indented behind '|'
+    # The same protection applies on the screen where you are about to type the password.
+    shown = run_cli(cfg, "approve", str(pid), passwords=["wrong-password-on-purpose-1"]).stdout
+    assert not any(ch in shown for ch in ("\x1b", "\x07", "\x9b"))
+    assert [ln for ln in shown.splitlines() if ln.startswith("#")] == [headers[0]]
