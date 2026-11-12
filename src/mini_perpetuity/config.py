@@ -12,8 +12,12 @@ from pathlib import Path
 
 NAME_RE = re.compile(r"[a-z][a-z0-9]{0,23}")
 DATA_POLICIES = ("synthetic_only", "real")
-_KEYS = {"instance", "host", "port", "password_file", "data_policy", "clients"}
+_KEYS = {
+    "instance", "host", "port", "password_file", "data_policy", "clients",
+    "backup_dir", "backup_recipients", "pg_bin_dir",
+}  # fmt: skip
 CLIENT_RE = re.compile(r"[a-z][a-z0-9-]{0,31}")
+RECIPIENT_RE = re.compile(r"age1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{58}")  # an age X25519 public key
 
 
 class ConfigError(Exception):
@@ -60,6 +64,9 @@ class Config:
     data_policy: str
     owner: str  # "human:<OS user owning the config file>"
     clients: tuple[str, ...] = ()  # registered AI clients, each allowed as "client:<name>"
+    backup_dir: Path | None = None  # where encrypted backups go (outside the repository)
+    backup_recipients: tuple[str, ...] = ()  # age public keys backups are encrypted to
+    pg_bin_dir: Path | None = None  # folder holding pg_dump and pg_restore (default: PATH)
 
     @property
     def dbname(self) -> str:
@@ -120,6 +127,20 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     pw = Path(data["password_file"])
     if not pw.is_absolute():
         raise ConfigError("password_file must be an absolute path")
+    recipients = data.get("backup_recipients", [])
+    if (
+        not isinstance(recipients, list)
+        or not all(isinstance(r, str) and RECIPIENT_RE.fullmatch(r) for r in recipients)
+        or len(set(recipients)) != len(recipients)
+    ):
+        raise ConfigError("backup_recipients must be a list of unique age public keys (age1...)")
+    dirs: dict[str, Path | None] = {}
+    for key in ("backup_dir", "pg_bin_dir"):
+        raw = data.get(key)
+        if raw is not None and not (isinstance(raw, str) and Path(raw).is_absolute()):
+            raise ConfigError(f"{key} must be an absolute path")
+        dirs[key] = Path(raw) if raw is not None else None
     return Config(
-        instance, data["host"], data["port"], pw, policy, _owner(path.stat().st_uid), tuple(clients)
-    )
+        instance, data["host"], data["port"], pw, policy, _owner(path.stat().st_uid),
+        tuple(clients), dirs["backup_dir"], tuple(recipients), dirs["pg_bin_dir"],
+    )  # fmt: skip

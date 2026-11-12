@@ -39,5 +39,19 @@ jobs:
       - run: uv run mypy
       - name: Confirm database is PostgreSQL 18
         run: psql "$MP_ADMIN_DSN" -tAc "SELECT version()" | grep -q "^PostgreSQL 18"
+      # M7 (backups): pg_dump must be the server's major version or newer, and the runner image
+      # removes the PostgreSQL apt repo after building. So add the official PGDG repo (key from
+      # postgresql.org, pinned to this repo by signed-by) and install the v18 client tools, plus
+      # the standard `age` tool that the tests use to check our files open with the reference tool.
+      - name: Install PostgreSQL 18 client tools and age
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-18 age
+          echo "MP_PG_BIN_DIR=/usr/lib/postgresql/18/bin" >> "$GITHUB_ENV"
       - run: uv run pytest -q
       - run: uv run pip-audit
