@@ -557,6 +557,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "cryptography" },
     { name = "mypy" },
     { name = "pip-audit" },
     { name = "pyrage-stubs" },
@@ -573,6 +574,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "cryptography", specifier = "==50.0.2" },
     { name = "mypy", specifier = "==2.4.1" },
     { name = "pip-audit", specifier = "==2.10.1" },
     { name = "pyrage-stubs", specifier = "==1.4.0" },

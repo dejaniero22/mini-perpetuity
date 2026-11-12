@@ -97,3 +97,6 @@ Read from the standards bodies' and projects' own pages or repositories (not sum
 - Local HTTPS adds a one-time trust step and a certificate to keep alive (renewal).
 - Version-1 accessibility is verified automatically and by keyboard testing here; a full screen-reader pass needs Rio's Mac.
 - This ADR can be wrong where it rests on unverified items; those are the spikes, and the plan changes if a spike fails.
+
+## Spike status (2026-11-12)
+Results and the steps for Rio's Mac are in [docs/spikes/M8-spikes.md](../spikes/M8-spikes.md). So far: MB18 holds on Linux (a separate backup role is not needed; the setup role owns the tables and must be unlocked per action); MB16, MB17 and MB19 are verified only in headless Chromium on Linux and remain open for Rio's Mac. This ADR's status does not change until those results are in.
