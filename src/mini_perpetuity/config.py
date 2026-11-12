@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import pwd
 import re
@@ -43,6 +44,12 @@ def role_name(instance: str) -> str:
 
 def approver_name(instance: str) -> str:
     return f"mp_{validate_name(instance)}_approver"
+
+
+def toml_string(value: object) -> str:
+    """A value as a TOML string. Backslashes (Windows paths) and quotes would otherwise break the
+    file; JSON's string escapes are also valid TOML."""
+    return json.dumps(str(value), ensure_ascii=False)
 
 
 def check_private(path: Path, what: str) -> None:

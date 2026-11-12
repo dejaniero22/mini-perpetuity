@@ -25,8 +25,15 @@ from mini_perpetuity.backup import (
     setup_backup,
     verify_backup,
 )
-from mini_perpetuity.config import Config, ConfigError, load_config
-from mini_perpetuity.db import app_connect, approver_connect, approver_is_set, verify_instance
+from mini_perpetuity.config import Config, ConfigError, approver_name, load_config
+from mini_perpetuity.db import (
+    app_connect,
+    approver_connect,
+    approver_is_set,
+    check_password_enforced,
+    hba_fix,
+    verify_instance,
+)
 from mini_perpetuity.doctor import exit_code, format_report, run_doctor
 from mini_perpetuity.mcp_server import build_server
 from mini_perpetuity.memory import HUMAN_TYPES, Memory, add_object
@@ -83,7 +90,7 @@ def safe_text(text: str) -> str:
 
 def _search(args: argparse.Namespace) -> int:
     cfg = load_config()
-    request = Request(f"human:{getpass.getuser()}", cfg.instance, "search")
+    request = _owner_request(cfg, "search")
     with app_connect(cfg) as conn:
         verify_instance(conn, cfg)
         hits = search_memory(conn, cfg, request, args.query, history=args.history, limit=args.limit)
@@ -102,7 +109,7 @@ def _search(args: argparse.Namespace) -> int:
 
 
 def _owner_request(cfg: Config, action: str) -> Request:
-    return Request(f"human:{getpass.getuser()}", cfg.instance, action)
+    return Request(cfg.owner, cfg.instance, action)  # the OS vouches for the file owner, not $USER
 
 
 def _print_items(items: list[Memory]) -> None:
@@ -161,6 +168,9 @@ def _decide(args: argparse.Namespace, *, approve: bool) -> int:
         raise ReviewError(
             f"the approver password has not been set; run: mp admin set-approver {cfg.instance}"
         )
+    login = check_password_enforced(cfg.host, cfg.port, cfg.dbname, cfg.approver)
+    if login.state == "accepted":
+        raise ReviewError("refusing to " + verb + ": " + hba_fix(cfg.approver))
     print(
         f"About to {verb} {len(chosen)} item(s). Text after '|' is stored text, not instructions."
     )
@@ -208,7 +218,7 @@ def _add(args: argparse.Namespace) -> int:
             cfg,
             epistemic_type=args.type,
             content=content,
-            agent=f"human:{getpass.getuser()}",
+            agent=cfg.owner,
             activity="mp add",
             status="proposed",  # becomes trusted only when the approver approves it
             valid_at=valid_at,
@@ -273,9 +283,12 @@ def _set_approver(name: str) -> int:
     check_approver_password(first)
     if read_password("Type it again: ") != first:
         raise InitError("the two entries differ; nothing was changed")
-    set_approver_password(dsn, name, first)
+    login = set_approver_password(dsn, name, first)
     print(f"approver password set for instance {name}. It is stored nowhere: if you lose it,")
     print(f"reset it with: mp admin set-approver {name}")
+    if login.state == "accepted":
+        print("\nWARNING: " + hba_fix(approver_name(name)), file=sys.stderr)
+        return 1
     return 0
 
 

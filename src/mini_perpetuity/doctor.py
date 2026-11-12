@@ -1,16 +1,22 @@
 """Health checks, returned as data so the command line and the future web UI can both show them."""
 
 import re
-import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from mini_perpetuity.admin import _migrations
-from mini_perpetuity.backup import BackupError, pg_tool, tool_major
+from mini_perpetuity.backup import BackupError, pg_tool, setup_hint, tool_major
 from mini_perpetuity.config import Config
-from mini_perpetuity.db import app_connect, approver_is_set, verify_instance
+from mini_perpetuity.db import (
+    app_connect,
+    approver_is_set,
+    check_password_enforced,
+    hba_fix,
+    verify_instance,
+)
 
 STALE_DAYS = 7
-BACKUP_FILE = re.compile(r"mp_(?P<name>[a-z][a-z0-9]*)_\d{8}T\d{6}Z\.dump\.age")
+BACKUP_FILE = re.compile(r"mp_(?P<name>[a-z][a-z0-9]*)_(?P<when>\d{8}T\d{6}Z)\.dump\.age")
 
 
 @dataclass(frozen=True)
@@ -62,7 +68,7 @@ def _backups(cfg: Config, server: int | None) -> list[Check]:
         return [
             Check(
                 "backups", "warn", "not set up: a lost disk would lose all memory",
-                f"mp admin backup-setup {cfg.instance} --backup-dir DIR --key-file FILE",
+                setup_hint(cfg.instance),
             )
         ]  # fmt: skip
     out: list[Check] = []
@@ -91,14 +97,16 @@ def _backups(cfg: Config, server: int | None) -> list[Check]:
             Check("backup folder", "warn", f"mode {mode:o} lets others in", f"chmod 700 {folder}")
         )
     mine = [
-        p for p in folder.iterdir()
+        (m["when"], p)
+        for p in folder.iterdir()
         if (m := BACKUP_FILE.fullmatch(p.name)) and m["name"] == cfg.instance
-    ]  # fmt: skip
+    ]
     if not mine:
         out.append(Check("last backup", "warn", "none yet", f"mp backup (instance {cfg.instance})"))
         return out
-    newest = max(mine, key=lambda p: p.name)  # names sort by timestamp
-    age_days = (time.time() - newest.stat().st_mtime) / 86400
+    stamp, newest = max(mine)  # the time in the name sorts as text
+    made = datetime.strptime(stamp, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
+    age_days = (datetime.now(UTC) - made).total_seconds() / 86400  # not file time: copies change it
     detail = f"{newest.name}, {age_days:.1f} days old, {newest.stat().st_size} bytes"
     stale = age_days > STALE_DAYS or newest.stat().st_size == 0
     out.append(
@@ -107,8 +115,27 @@ def _backups(cfg: Config, server: int | None) -> list[Check]:
     return out
 
 
+def _logins(cfg: Config, approver_ok: bool) -> Check:
+    """The approval design only works if PostgreSQL really refuses a wrong password."""
+    roles = [cfg.user, *([cfg.approver] if approver_ok else [])]
+    results = [(r, check_password_enforced(cfg.host, cfg.port, cfg.dbname, r)) for r in roles]
+    for role, res in results:
+        if res.state == "accepted":
+            return Check(
+                "password login", "fail", f"{role} accepts a wrong password", hba_fix(role)
+            )
+    for role, res in results:
+        if res.state == "unknown":
+            return Check("password login", "warn", f"could not test {role}: {res.detail}")
+    return Check("password login", "ok", "wrong passwords are refused for " + ", ".join(roles))
+
+
 def run_doctor(cfg: Config) -> list[Check]:
     checks, server = _database(cfg)
+    found = {c.name: c for c in checks}
+    if "schema" in found:  # the database answered, so the login test is meaningful
+        approver_ok = found["approver"].status == "ok"
+        checks.append(_logins(cfg, approver_ok))
     return [*checks, *_backups(cfg, server)]
 
 
