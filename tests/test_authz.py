@@ -12,7 +12,9 @@ CFG = Config(
 )  # fmt: skip
 
 
-@pytest.mark.parametrize("action", ["search", "get", "review", "approve", "reject"])
+@pytest.mark.parametrize(
+    "action", ["search", "get", "review", "approve", "reject", "correct", "retire"]
+)
 def test_owner_may_use_every_owner_action(action: str) -> None:
     authorize(CFG, Request("human:rio", "work", action))
 
@@ -24,7 +26,7 @@ def test_registered_clients_may_read_and_propose(client: str, action: str) -> No
 
 
 @pytest.mark.parametrize("client", ["claude-desktop", "claude-code"])
-@pytest.mark.parametrize("action", ["approve", "reject", "review"])
+@pytest.mark.parametrize("action", ["approve", "reject", "review", "correct", "retire"])
 def test_a_client_can_never_decide_on_proposals(client: str, action: str) -> None:
     with pytest.raises(Denied, match="not allowed"):
         authorize(CFG, Request(f"client:{client}", "work", action))
@@ -76,6 +78,6 @@ def test_unlisted_actions_denied(principal: str, action: str) -> None:
 
 def test_allow_lists_are_exactly_these() -> None:
     # Default deny: widening these sets must come with new tests. Only the owner may decide.
-    assert OWNER_ACTIONS == {"search", "get", "review", "approve", "reject"}
+    assert OWNER_ACTIONS == {"search", "get", "review", "approve", "reject", "correct", "retire"}
     assert CLIENT_ACTIONS == {"search", "get", "propose"}
-    assert not CLIENT_ACTIONS & {"review", "approve", "reject"}
+    assert not CLIENT_ACTIONS & {"review", "approve", "reject", "correct", "retire"}

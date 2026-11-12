@@ -1,7 +1,7 @@
 """Memory objects: bi-temporal versions with provenance. Callers commit."""
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import psycopg
 from psycopg.rows import class_row
@@ -98,8 +98,14 @@ def correct_object(
     content: str | None = None,
     valid_at: datetime | None = None,
     invalid_at: datetime | None = None,
+    retire: bool = False,
+    reason: str | None = None,
 ) -> int:
-    """Write a new version of a live object and expire the old one. Returns the new id."""
+    """Write a new version of a live object and expire the old one. Returns the new id.
+
+    `retire` makes the new version stop being true now (it is no longer found by normal search,
+    only by history). `reason` goes into the ledger event.
+    """
     old = (
         conn.cursor(row_factory=class_row(Memory))
         .execute(
@@ -116,6 +122,8 @@ def correct_object(
         raise ValueError(
             f"memory object {old_id} is {old.status}; only approved objects can be corrected"
         )
+    if retire:  # never earlier than just after the version starts (the table requires it)
+        invalid_at = max(datetime.now(UTC), old.valid_at + timedelta(microseconds=1))
     new_content = old.content if content is None else content
     check_text(new_content)
     new_id = _insert(
@@ -137,7 +145,12 @@ def correct_object(
         "UPDATE memory_objects SET expired_at = now(), status = 'superseded' WHERE id = %s",
         (old_id,),
     )
-    append_event(conn, cfg, agent, "memory.correct", {"id": new_id, "supersedes": old_id})
+    payload: dict[str, object] = {"id": new_id, "supersedes": old_id}
+    if retire:
+        payload["retired"] = True
+    if reason:
+        payload["reason"] = reason
+    append_event(conn, cfg, agent, "memory.correct", payload)
     return new_id
 
 

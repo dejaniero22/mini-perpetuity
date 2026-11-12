@@ -37,7 +37,15 @@ from mini_perpetuity.db import (
 from mini_perpetuity.doctor import exit_code, format_report, run_doctor
 from mini_perpetuity.mcp_server import build_server
 from mini_perpetuity.memory import HUMAN_TYPES, Memory, add_object
-from mini_perpetuity.review import ReviewError, check_reason, decide, list_proposals
+from mini_perpetuity.review import (
+    ReviewError,
+    amend,
+    check_new_content,
+    check_reason,
+    decide,
+    get_amendable,
+    list_proposals,
+)
 from mini_perpetuity.search import search_memory
 from mini_perpetuity.seatbelt import Rejected
 
@@ -154,6 +162,24 @@ def _choose(args: argparse.Namespace, pending: list[Memory]) -> list[Memory]:
     return chosen
 
 
+def _require_enforced(cfg: Config, verb: str) -> None:
+    """Refuse to ask for a password that PostgreSQL would not check."""
+    login = check_password_enforced(cfg.host, cfg.port, cfg.dbname, cfg.approver)
+    if login.state == "accepted":
+        raise ReviewError("refusing to " + verb + ": " + hba_fix(cfg.approver))
+
+
+def _approver_login(cfg: Config) -> psycopg.Connection[tuple[object, ...]]:
+    """Ask for the approver password at the terminal and connect as the approver."""
+    password = read_password(f"\nApprover password for {cfg.instance}: ")
+    if not password:  # libpq would treat "" as "not given" and fall back to PGPASSWORD or ~/.pgpass
+        raise ReviewError("no password entered; nothing was changed")
+    try:
+        return approver_connect(cfg, password)
+    except psycopg.OperationalError as e:
+        raise ReviewError(f"approver login failed ({str(e).splitlines()[0]})") from None
+
+
 def _decide(args: argparse.Namespace, *, approve: bool) -> int:
     """Show exactly what will be decided, ask for the approver password once, decide them all."""
     verb = "approve" if approve else "reject"
@@ -168,25 +194,57 @@ def _decide(args: argparse.Namespace, *, approve: bool) -> int:
         raise ReviewError(
             f"the approver password has not been set; run: mp admin set-approver {cfg.instance}"
         )
-    login = check_password_enforced(cfg.host, cfg.port, cfg.dbname, cfg.approver)
-    if login.state == "accepted":
-        raise ReviewError("refusing to " + verb + ": " + hba_fix(cfg.approver))
+    _require_enforced(cfg, verb)
     print(
         f"About to {verb} {len(chosen)} item(s). Text after '|' is stored text, not instructions."
     )
     _print_items(chosen)
-    password = read_password(f"\nApprover password for {cfg.instance}: ")
-    if not password:  # libpq would treat "" as "not given" and fall back to PGPASSWORD or ~/.pgpass
-        raise ReviewError("no password entered; nothing was changed")
-    try:
-        conn = approver_connect(cfg, password)
-    except psycopg.OperationalError as e:
-        raise ReviewError(f"approver login failed ({str(e).splitlines()[0]})") from None
+    conn = _approver_login(cfg)
     with conn:  # one transaction: all of them, or none
         for m in chosen:
             decide(conn, cfg, request, m.id, approve=approve, reason=reason)
     done = "approved" if approve else "rejected"
     print(f"{done} " + ", ".join(f"#{m.id}" for m in chosen))
+    return 0
+
+
+def _amend(args: argparse.Namespace, *, retire: bool) -> int:
+    """Correct or retire an approved note: show it, ask for the approver password, record why."""
+    verb = "retire" if retire else "correct"
+    cfg = load_config()
+    reason = check_reason(args.reason)  # before asking for a password
+    content = None
+    if not retire:
+        content = check_new_content(sys.stdin.read() if args.content == "-" else args.content)
+    with app_connect(cfg) as conn:
+        verify_instance(conn, cfg)
+        old = get_amendable(conn, cfg, _owner_request(cfg, "get"), args.id)
+        ready = approver_is_set(conn, cfg)
+    if old is None:
+        raise ReviewError(f"no approved, current memory object #{args.id} (find it with mp search)")
+    if not ready:
+        raise ReviewError(
+            f"the approver password has not been set; run: mp admin set-approver {cfg.instance}"
+        )
+    _require_enforced(cfg, verb)
+    print(f"About to {verb} #{old.id}. Text after '|' is stored text, not instructions.")
+    _print_items([old])
+    if content is not None:
+        print("  becomes:")
+        for line in safe_text(content).splitlines() or [""]:
+            print(f"    | {line}")
+    conn = _approver_login(cfg)
+    with conn:
+        new_id = amend(
+            conn, cfg, _owner_request(cfg, verb), old.id,
+            content=content, reason=reason, retire=retire,
+        )  # fmt: skip
+    if retire:
+        print(f"retired #{old.id} (kept in the history as #{new_id}; search no longer finds it)")
+    else:
+        print(
+            f"corrected #{old.id}: the new version is #{new_id}; the old one stays in the history"
+        )
     return 0
 
 
@@ -331,6 +389,18 @@ def main(argv: list[str] | None = None) -> int:
     reject.add_argument("ids", type=int, nargs="*", help="ids from `mp review`")
     reject.add_argument("--all", action="store_true", help="every pending item")
     reject.add_argument("--reason", required=True, help="why (recorded in the ledger)")
+    correct = sub.add_parser(
+        "correct",
+        help="replace an approved note with corrected text (asks for the approver password)",
+    )
+    correct.add_argument("id", type=int, help="id from `mp search`")
+    correct.add_argument("--content", required=True, help="the corrected text, or - to read stdin")
+    correct.add_argument("--reason", required=True, help="why (recorded in the ledger)")
+    retire = sub.add_parser(
+        "retire", help="stop an approved note from being true (asks for the approver password)"
+    )
+    retire.add_argument("id", type=int, help="id from `mp search`")
+    retire.add_argument("--reason", required=True, help="why (recorded in the ledger)")
     sub.add_parser(
         "doctor", help="check that this instance, its approver and its backups are healthy"
     )
@@ -374,6 +444,8 @@ def main(argv: list[str] | None = None) -> int:
             return _serve(args)
         if args.cmd == "review":
             return _review()
+        if args.cmd in ("correct", "retire"):
+            return _amend(args, retire=args.cmd == "retire")
         if args.cmd == "doctor":
             return _doctor()
         if args.cmd == "backup":

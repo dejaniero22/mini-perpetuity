@@ -415,11 +415,16 @@ def test_the_mcp_server_has_no_path_to_approval(
 
     tools = asyncio.run(names())
     assert tools == {"search_memory", "get_memory", "propose_memory"}
-    assert not any(w in t for t in tools for w in ("approve", "reject", "review", "decide"))
+    assert not any(
+        w in t
+        for t in tools
+        for w in ("approve", "reject", "review", "decide", "correct", "retire", "amend")
+    )
     probe = (
         "import sys, mini_perpetuity.mcp_server\n"
         "assert 'mini_perpetuity.review' not in sys.modules, 'server imports the approval code'\n"
         "assert not hasattr(mini_perpetuity.mcp_server, 'decide')\n"
+        "assert not hasattr(mini_perpetuity.mcp_server, 'amend')\n"
     )
     done = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
