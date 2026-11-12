@@ -1,6 +1,6 @@
 # ADR-M6: Write-back with quarantine
 
-- **Status:** Proposed. Decisions 1 and 2 were given by Rio on 2026-11-11; the ADR is accepted when its PR merges.
+- **Status:** Accepted. Decisions 1 and 2 were given by Rio on 2026-11-11. **Amended by [ADR-M6b](ADR-M6b-approver-role.md):** the limit below ("the database cannot tell your CLI from a shell") is addressed there by a separate approver role.
 - **Date:** 2026-11-11
 
 ## Decisions (Rio, 2026-11-11)

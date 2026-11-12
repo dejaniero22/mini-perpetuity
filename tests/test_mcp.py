@@ -10,6 +10,7 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
+from helpers import trusted_connect
 from mcp import Client, StdioServerParameters
 
 from mini_perpetuity.access import MAX_REQUESTS_PER_MINUTE
@@ -66,7 +67,7 @@ def add(cfg: Config, content: str, **kw: object) -> int:
         "status": "approved",
     }
     args.update(kw)
-    with app_connect(cfg) as c:
+    with trusted_connect(cfg) as c:  # approved memory can only be created by the approver
         return add_object(c, cfg, content=content, **args)  # type: ignore[arg-type]
 
 
@@ -330,8 +331,8 @@ def test_a_proposal_over_mcp_is_quarantined_until_the_owner_approves(
         ("get_memory", {"id": 1, "history": True}),
     )
     assert items(found) == [] and items(hist) == [] and fetched.is_error
-    # Only the owner's action changes that.
-    with app_connect(cfg) as c:
+    # Only the owner's action, with the approver's connection, changes that.
+    with trusted_connect(cfg) as c:
         decide(c, cfg, Request(cfg.owner, cfg.instance, "approve"), 1, approve=True)
     (after,) = call(cfg, ("search_memory", {"query": "quarterly"}))
     assert [i["id"] for i in items(after)] == [1]

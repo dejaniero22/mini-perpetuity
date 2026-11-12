@@ -5,10 +5,11 @@ from pathlib import Path
 
 import psycopg
 import pytest
+from helpers import TEST_APPROVER_PASSWORD
 from psycopg import sql
 
-from mini_perpetuity.admin import init_instance
-from mini_perpetuity.config import Config, db_name, load_config, role_name
+from mini_perpetuity.admin import init_instance, set_approver_password
+from mini_perpetuity.config import Config, approver_name, db_name, load_config, role_name
 
 
 @pytest.fixture(scope="session")
@@ -22,13 +23,16 @@ def admin_dsn() -> str:
 
 
 @pytest.fixture
-def make_instance(admin_dsn: str, tmp_path: Path) -> Iterator[Callable[[], Config]]:
+def make_instance(admin_dsn: str, tmp_path: Path) -> Iterator[Callable[..., Config]]:
     created: list[str] = []
 
-    def make() -> Config:
+    def make(*, approver: bool = True) -> Config:
+        """A fresh instance. By default its approver password is set (to the test password)."""
         name = "t" + secrets.token_hex(5)
         created.append(name)
         path = init_instance(admin_dsn, name, tmp_path)
+        if approver:
+            set_approver_password(admin_dsn, name, TEST_APPROVER_PASSWORD)
         return load_config({"MP_CONFIG": str(path)})
 
     yield make
@@ -39,7 +43,8 @@ def make_instance(admin_dsn: str, tmp_path: Path) -> Iterator[Callable[[], Confi
                     sql.Identifier(db_name(name))
                 )
             )
-            c.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role_name(name))))
+            for role in (role_name(name), approver_name(name)):
+                c.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)))
 
 
 @pytest.fixture

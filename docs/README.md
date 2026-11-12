@@ -1,6 +1,6 @@
 # Documentation index
 
 - [plan/BUILD_PLAN.md](plan/BUILD_PLAN.md): the step-by-step build plan (M0–M7). Where it conflicts with an accepted ADR, the ADR wins.
-- [decisions/](decisions/): architecture decision records. ADR-M0 governance subset; ADR-M1 instance isolation (N named instances); ADR-M3 secret storage (`0600` password file); ADR-M5 MCP server, client principals and the SDK; ADR-M6 write-back with quarantine.
+- [decisions/](decisions/): architecture decision records. ADR-M0 governance subset; ADR-M1 instance isolation (N named instances); ADR-M3 secret storage (`0600` password file); ADR-M5 MCP server, client principals and the SDK; ADR-M6 write-back with quarantine; ADR-M6b the approver role (separation of duties).
 - [learning/](learning/): a short note per step: what was learned, what was not verified.
 - [verification-backlog.md](verification-backlog.md): unverified facts, each tied to the step that needs it.

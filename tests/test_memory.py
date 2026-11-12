@@ -1,13 +1,11 @@
 """Memory-object tests against a real PostgreSQL (MP_ADMIN_DSN). CI runs these on PostgreSQL 18."""
 
-import os
-import subprocess
-import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
 
 import psycopg
 import pytest
+from helpers import TEST_APPROVER_PASSWORD, run_cli, trusted_connect
 from psycopg.conninfo import make_conninfo
 
 from mini_perpetuity.cli import main
@@ -84,7 +82,7 @@ def test_valid_time_and_system_time_give_different_answers(
             "WHERE id = %s",
             (v1[0],),
         )
-    with app_connect(cfg) as c:
+    with trusted_connect(cfg) as c:
 
         def contents(valid: str, known: str | None) -> list[str]:
             return [m.content for m in as_of(c, ts(valid), ts(known) if known else None)]
@@ -105,11 +103,11 @@ def test_valid_time_and_system_time_give_different_answers(
 
 def test_correction_chain(make_instance: Make) -> None:
     cfg = make_instance()
-    with app_connect(cfg) as c:
+    with trusted_connect(cfg) as c:
         v1 = add(c, cfg, content="first", valid_at=ts("2024-01-01"))
-    with app_connect(cfg) as c:
+    with trusted_connect(cfg) as c:
         v2 = correct_object(c, cfg, v1, agent="human:test", activity="test", content="second")
-    with app_connect(cfg) as c:
+    with trusted_connect(cfg) as c:
         old, new = (
             c.execute(
                 "SELECT status, expired_at, created_at, supersedes, content, valid_at "
@@ -139,10 +137,10 @@ def test_correction_chain(make_instance: Make) -> None:
 
 def test_every_epistemic_type_is_accepted_and_unknown_rejected(make_instance: Make) -> None:
     cfg = make_instance()
-    with app_connect(cfg) as c:
+    with trusted_connect(cfg) as c:
         for t in EPISTEMIC_TYPES:
             add(c, cfg, epistemic_type=t, derived_from="doc 1, section 2")
-    with app_connect(cfg) as c:
+    with trusted_connect(cfg) as c:
         sql, row = insert_sql(epistemic_type="gossip")
         with pytest.raises(psycopg.errors.CheckViolation):
             c.execute(sql, row)
@@ -151,7 +149,7 @@ def test_every_epistemic_type_is_accepted_and_unknown_rejected(make_instance: Ma
 @pytest.mark.parametrize("t", ["source_record", "extracted_claim", "ai_inference", "summary"])
 def test_derived_types_need_a_source_pointer(make_instance: Make, t: str) -> None:
     cfg = make_instance()
-    with app_connect(cfg) as c:
+    with trusted_connect(cfg) as c:
         sql, row = insert_sql(epistemic_type=t)
         with pytest.raises(psycopg.errors.CheckViolation):
             c.execute(sql, row)
@@ -174,7 +172,7 @@ def test_derived_types_need_a_source_pointer(make_instance: Make, t: str) -> Non
 )
 def test_invalid_rows_rejected(make_instance: Make, over: dict[str, object]) -> None:
     cfg = make_instance()
-    with app_connect(cfg) as c:
+    with trusted_connect(cfg) as c:
         sql, row = insert_sql(**over)
         with pytest.raises((psycopg.errors.CheckViolation, psycopg.errors.NotNullViolation)):
             c.execute(sql, row)
@@ -205,7 +203,7 @@ def test_app_role_cannot_set_system_columns_on_insert(make_instance: Make, col: 
 )
 def test_app_role_cannot_edit_delete_or_truncate(make_instance: Make, stmt: str) -> None:
     cfg = make_instance()
-    with app_connect(cfg) as c:
+    with trusted_connect(cfg) as c:
         add(c, cfg)
     with app_connect(cfg) as c, pytest.raises(psycopg.errors.InsufficientPrivilege):
         c.execute(stmt)
@@ -222,10 +220,10 @@ def test_app_role_cannot_edit_delete_or_truncate(make_instance: Make, stmt: str)
 )
 def test_trigger_allows_only_expiring_a_live_version(make_instance: Make, stmt: str) -> None:
     cfg = make_instance()
-    with app_connect(cfg) as c:
+    with trusted_connect(cfg) as c:
         add(c, cfg)
     with (
-        app_connect(cfg) as c,
+        trusted_connect(cfg) as c,
         pytest.raises((psycopg.errors.RestrictViolation, psycopg.errors.CheckViolation)),
     ):
         c.execute(stmt)
@@ -233,10 +231,10 @@ def test_trigger_allows_only_expiring_a_live_version(make_instance: Make, stmt: 
 
 def test_cannot_expire_twice_or_change_an_expired_version(make_instance: Make) -> None:
     cfg = make_instance()
-    with app_connect(cfg) as c:
+    with trusted_connect(cfg) as c:
         v1 = add(c, cfg)
         correct_object(c, cfg, v1, agent="human:test", activity="test", content="new")
-    with app_connect(cfg) as c, pytest.raises(psycopg.errors.RestrictViolation):
+    with trusted_connect(cfg) as c, pytest.raises(psycopg.errors.RestrictViolation):
         c.execute(
             "UPDATE memory_objects SET expired_at = now() + interval '1 day', "
             "status = 'superseded' WHERE id = %s",
@@ -246,10 +244,10 @@ def test_cannot_expire_twice_or_change_an_expired_version(make_instance: Make) -
 
 def test_two_versions_cannot_supersede_the_same_one(make_instance: Make, admin_dsn: str) -> None:
     cfg = make_instance()
-    with app_connect(cfg) as c:
+    with trusted_connect(cfg) as c:
         v1 = add(c, cfg)
         correct_object(c, cfg, v1, agent="human:test", activity="test", content="a")
-    with app_connect(cfg) as c:
+    with trusted_connect(cfg) as c:
         sql, row = insert_sql(supersedes=v1)
         with pytest.raises(psycopg.errors.UniqueViolation):
             c.execute(sql, row)
@@ -267,19 +265,19 @@ def count(cfg: Config, table: str) -> int:
 
 def test_seatbelt_blocks_before_anything_is_written(make_instance: Make) -> None:
     cfg = make_instance()
-    with app_connect(cfg) as c, pytest.raises(Rejected):
+    with trusted_connect(cfg) as c, pytest.raises(Rejected):
         add(c, cfg, content="employee SSN 123-45-6789")
-    with app_connect(cfg) as c, pytest.raises(Rejected):
+    with trusted_connect(cfg) as c, pytest.raises(Rejected):
         add(c, cfg, epistemic_type="source_record", derived_from="password = hunter2hunter2")
     assert count(cfg, "memory_objects") == 0 and count(cfg, "events") == 0
 
 
 def test_add_and_correct_write_ledger_events_without_content(make_instance: Make) -> None:
     cfg = make_instance()
-    with app_connect(cfg) as c:
+    with trusted_connect(cfg) as c:
         v1 = add(c, cfg, content="private thought")
         v2 = correct_object(c, cfg, v1, agent="human:test", activity="test", content="edited")
-    with app_connect(cfg) as c:
+    with trusted_connect(cfg) as c:
         rows = c.execute("SELECT activity, payload::text FROM events ORDER BY id").fetchall()
     assert [r[0] for r in rows] == ["memory.add", "memory.correct"]
     assert str(v1) in str(rows[0][1]) and str(v2) in str(rows[1][1])
@@ -288,56 +286,37 @@ def test_add_and_correct_write_ledger_events_without_content(make_instance: Make
 
 def test_failed_insert_rolls_back_its_ledger_event(make_instance: Make) -> None:
     cfg = make_instance()
-    with pytest.raises(psycopg.errors.CheckViolation), app_connect(cfg) as c:
+    with pytest.raises(psycopg.errors.CheckViolation), trusted_connect(cfg) as c:
         add(c, cfg, activity="")  # violates a CHECK after validation passes
     assert count(cfg, "memory_objects") == 0 and count(cfg, "events") == 0
 
 
-def run_cli(cfg: Config, *args: str) -> subprocess.CompletedProcess[str]:
-    env = {
-        "MP_CONFIG": str(cfg.password_file.with_suffix(".toml")),
-        "PATH": os.environ["PATH"],
-    }
-    return subprocess.run(
-        [sys.executable, "-m", "mini_perpetuity", *args], env=env, capture_output=True, text=True
-    )
-
-
-def test_cli_add(make_instance: Make) -> None:
+def test_cli_add_stores_a_pending_note_and_approval_makes_it_trusted(make_instance: Make) -> None:
     cfg = make_instance()
     r = run_cli(cfg, "add", "--type", "human_decision", "--content", "Use PostgreSQL")
-    assert r.returncode == 0 and "added memory object 1" in r.stdout
+    assert r.returncode == 0 and "added #1 as pending" in r.stdout and "mp approve 1" in r.stdout
     r = run_cli(
-        cfg,
-        "add",
-        "--type",
-        "source_record",
-        "--content",
-        "Retention is 7 years",
-        "--source",
-        "policy X section Y",
-        "--valid-at",
-        "2024-01-01T00:00:00+00:00",
-        "--sensitivity",
-        "sensitive",
-    )
-    assert r.returncode == 0
-    with app_connect(cfg) as c:
-        got = [
-            (
-                m.epistemic_type,
-                m.status,
-                m.sensitivity,
-                m.was_derived_from,
-                m.generated_by_activity,
-                m.attributed_to_agent.startswith("human:"),
-            )
-            for m in as_of(c, datetime.now(UTC))
-        ]
-    assert got == [
-        ("human_decision", "approved", "normal", None, "mp add", True),
-        ("source_record", "approved", "sensitive", "policy X section Y", "mp add", True),
+        cfg, "add", "--type", "source_record", "--content", "Retention is 7 years",
+        "--source", "policy X section Y", "--valid-at", "2024-01-01T00:00:00+00:00",
+        "--sensitivity", "sensitive",
+    )  # fmt: skip
+    assert r.returncode == 0  # adding never asks for a password
+
+    def snapshot() -> list[tuple[object, ...]]:
+        with trusted_connect(cfg) as c:
+            return [
+                (m.epistemic_type, m.status, m.sensitivity, m.was_derived_from,
+                 m.generated_by_activity, m.attributed_to_agent.startswith("human:"))
+                for m in as_of(c, datetime.now(UTC))
+            ]  # fmt: skip
+
+    assert snapshot() == [
+        ("human_decision", "proposed", "normal", None, "mp add", True),
+        ("source_record", "proposed", "sensitive", "policy X section Y", "mp add", True),
     ]
+    approved = run_cli(cfg, "approve", "1", "2", passwords=[TEST_APPROVER_PASSWORD])
+    assert approved.returncode == 0 and "approved #1, #2" in approved.stdout
+    assert [row[1] for row in snapshot()] == ["approved", "approved"]
 
 
 @pytest.mark.parametrize(
@@ -360,25 +339,9 @@ def test_cli_add_refusals(make_instance: Make, args: list[str]) -> None:
 
 def test_cli_add_reads_stdin(make_instance: Make) -> None:
     cfg = make_instance()
-    env = {"MP_CONFIG": str(cfg.password_file.with_suffix(".toml")), "PATH": os.environ["PATH"]}
-    r = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "mini_perpetuity",
-            "add",
-            "--type",
-            "human_decision",
-            "--content",
-            "-",
-        ],
-        env=env,
-        input="from stdin\n",
-        capture_output=True,
-        text=True,
-    )
+    r = run_cli(cfg, "add", "--type", "human_decision", "--content", "-", stdin_text="from stdin\n")
     assert r.returncode == 0
-    with app_connect(cfg) as c:
+    with trusted_connect(cfg) as c:
         assert [m.content for m in as_of(c, datetime.now(UTC))] == ["from stdin"]
 
 

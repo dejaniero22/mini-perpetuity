@@ -4,6 +4,7 @@ from collections.abc import Callable
 
 import psycopg
 import pytest
+from helpers import trusted_connect
 from psycopg.conninfo import make_conninfo
 
 from mini_perpetuity import access
@@ -26,7 +27,7 @@ def add(cfg: Config, content: str, **kw: object) -> int:
         "status": "approved",
     }
     args.update(kw)
-    with app_connect(cfg) as c:
+    with trusted_connect(cfg) as c:  # approved memory can only be created by the approver
         return add_object(c, cfg, content=content, **args)  # type: ignore[arg-type]
 
 
