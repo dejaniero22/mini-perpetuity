@@ -186,7 +186,7 @@ uv run mp admin restore NAME FILE --key KEYFILE    # needs MP_ADMIN_DSN; add --p
 | M6 | Write-back with quarantine: `propose_memory`, `mp review`/`approve`/`reject` | done |
 | M6b | Stronger approval: separate approver role, password typed once per batch | done |
 | M7 | Daily use: `mp doctor`, encrypted backups and restore | done |
-| M8 spikes | Four small tests that decide the web UI design ([results and Mac steps](docs/spikes/M8-spikes.md)) | in review |
+| M8 spikes | Small tests that decide the web UI design ([results](docs/spikes/M8-spikes.md)): Chrome on Mac verified; Safari, Firefox, Windows open | in review |
 | M8 | Local web front end (HTTPS; search, add and review, timeline, audit and status) | decision record proposed ([ADR-M8](docs/decisions/ADR-M8-web-ui.md)); built after M7 |
 
 Open verification items: [docs/verification-backlog.md](docs/verification-backlog.md).
