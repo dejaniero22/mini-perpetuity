@@ -185,7 +185,8 @@ uv run mp admin restore NAME FILE --key KEYFILE    # needs MP_ADMIN_DSN; add --p
 | M5 | MCP server (stdio), per-client principals, rate limits | done |
 | M6 | Write-back with quarantine: `propose_memory`, `mp review`/`approve`/`reject` | done |
 | M6b | Stronger approval: separate approver role, password typed once per batch | done |
-| M7 | Daily use: `mp doctor`, encrypted backups and restore | in review |
+| M7 | Daily use: `mp doctor`, encrypted backups and restore | done |
+| M8 spikes | Four small tests that decide the web UI design ([results and Mac steps](docs/spikes/M8-spikes.md)) | in review |
 | M8 | Local web front end (HTTPS; search, add and review, timeline, audit and status) | decision record proposed ([ADR-M8](docs/decisions/ADR-M8-web-ui.md)); built after M7 |
 
 Open verification items: [docs/verification-backlog.md](docs/verification-backlog.md).
@@ -199,6 +200,7 @@ Open verification items: [docs/verification-backlog.md](docs/verification-backlo
 | `SECURITY.md` | Security notes and reporting |
 | `CHANGELOG.md` | Keep a Changelog, one entry per step |
 | `src/mini_perpetuity/` | `config.py` (loader), `admin.py` (instance creation, migrations), `db.py`, `ledger.py` (append-only events), `memory.py` (bi-temporal objects), `search.py` (retrieval), `authz.py` (default-deny gate), `access.py` (gate + rate limits), `mcp_server.py` (MCP server), `propose.py` / `review.py` (write-back and the owner's decisions; `db.py` holds the approver connection), `backup.py` (encrypted backup, verify, restore), `doctor.py` (health checks), `seatbelt.py`, `cli.py`, `migrations/` |
+| `spikes/` | Throwaway experiment scripts for the M8 decisions (not part of the product) |
 | `tests/` | Config, instance-isolation, ledger, memory, search, authorization, rate-limit, quarantine and MCP contract tests (real PostgreSQL), hook tests |
 | `pyproject.toml`, `uv.lock` | Pinned project and dependencies |
 | `docs/plan/` | The build plan |

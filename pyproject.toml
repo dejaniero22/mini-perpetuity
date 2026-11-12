@@ -19,6 +19,7 @@ dev = [
     "mypy==2.4.1",
     "pip-audit==2.10.1",
     "pyrage-stubs==1.4.0",
+    "cryptography==50.0.2",
 ]
 
 [build-system]
@@ -33,7 +34,11 @@ select = ["E", "F", "I", "B", "UP", "S"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101", "S105", "S106", "S603"]
+"spikes/*" = ["S104"]
 
 [tool.mypy]
 strict = true
-files = ["src", "tests"]
+files = ["src", "tests", "spikes"]
+
+[tool.pytest.ini_options]
+pythonpath = ["spikes"]
