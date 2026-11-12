@@ -11,8 +11,10 @@ from mini_perpetuity.config import Config
 
 CLIENT_PREFIX = "client:"
 # Add an action here only together with its tests.
-OWNER_ACTIONS = frozenset({"search", "get", "review", "approve", "reject"})
-CLIENT_ACTIONS = frozenset({"search", "get", "propose"})  # a client can never approve or reject
+OWNER_ACTIONS = frozenset({"search", "get", "review", "approve", "reject", "correct", "retire"})
+CLIENT_ACTIONS = frozenset(
+    {"search", "get", "propose"}
+)  # a client can never approve, reject, correct or retire
 
 
 class Denied(Exception):

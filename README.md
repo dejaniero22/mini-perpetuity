@@ -145,6 +145,15 @@ uv run mp reject 6 7 --reason "that is not what I decided"
 - An AI proposal is an `ai_inference` or a `summary`, must name its source (`derived_from`), is at most 2,000 characters, and a client can have at most 50 waiting. Approval does not change who wrote it: it stays attributed to the client.
 - Read what you approve: the tool cannot tell a wrong note from a right one.
 
+**Fixing a mistake.** An approved note is never edited in place. Both commands show the note, ask for the approver password, and record why in the ledger:
+
+```bash
+uv run mp correct 12 --content "We use Postgres 18" --reason "version typo"   # new version replaces #12
+uv run mp retire 12 --reason "no longer true"                                # normal search stops finding it
+```
+
+The old version stays in the history (`mp search --history`). Only you can do this: the AI-facing server has no such tool.
+
 **PostgreSQL must really check the password.** Some installs (Postgres.app's default is one) let local programs in with no password at all ("trust" login). Then the approver password protects nothing. `mp doctor` tries a wrong password and shows **FAIL** if it gets in, `mp admin set-approver` warns, and `mp approve` / `mp reject` refuse to run until it is fixed. The fix is two lines in PostgreSQL's login rules, printed by those commands and in [docs/install.md](docs/install.md).
 
 **What this protects.** The database itself refuses to let the everyday role (the MCP server, `mp search`, `mp add`, a script, or any AI that merely runs commands as you) approve anything, create trusted memory, change a status, or write a `human_decision` event. Only the approver role can, and its password exists only in your head.
