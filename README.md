@@ -168,6 +168,7 @@ uv run mp reject 6 7 --reason "that is not what I decided"
 | M6 | Write-back with quarantine: `propose_memory`, `mp review`/`approve`/`reject` | done |
 | M6b | Stronger approval: separate approver role, password typed once per batch | in review |
 | M7 | Daily use: `mp doctor`, backups | planned |
+| M8 | Local web front end (HTTPS; search, add and review, timeline, audit and status) | decision record proposed ([ADR-M8](docs/decisions/ADR-M8-web-ui.md)); built after M7 |
 
 Open verification items: [docs/verification-backlog.md](docs/verification-backlog.md).
 
