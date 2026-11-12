@@ -6,7 +6,7 @@ A small, single-user, local **memory layer for AI clients**. It runs as any numb
 
 ## Quick start (M1)
 
-Requires Python 3.14, [uv](https://docs.astral.sh/uv/), and a local PostgreSQL 18 where you have an admin login. **[U]** Native install steps for macOS are still unverified (backlog MB1).
+Requires Python 3.14, [uv](https://docs.astral.sh/uv/), and a local PostgreSQL 18 where you have an admin login. Install steps for Mac and Windows: [docs/install.md](docs/install.md) (read from the official pages; not yet tried by a user, backlog MB1).
 
 ```bash
 uv sync

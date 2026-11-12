@@ -2,7 +2,7 @@
 
 | ID | Item | Needed by | Status |
 |---|---|---|---|
-| MB1 | PostgreSQL 18 native install on Mac (Postgres.app/Homebrew): steps and version (main B67) | M1 | open |
+| MB1 | PostgreSQL 18 native install on Mac (Postgres.app/Homebrew): steps and version (main B67) | M1 | partly done: Postgres.app steps read from the official pages and written in `docs/install.md` (Postgres.app 2.9.6 ships PostgreSQL 18.6). Not yet tried on Rio's Mac; Homebrew not checked |
 | MB2 | PostgreSQL 18 Docker Official Image digest for CI (main B68) | M1 | **done 2026-11-10**: `postgres:18` = `sha256:e3d24f69…c42` (Docker Hub registry manifest, `library/postgres`). Digest will go stale; bump deliberately. |
 | MB3 | Trigger behaviour vs table owner and superuser; whether the app role can `ALTER TABLE ... DISABLE TRIGGER` | M2 | **answered 2026-11-11** by tests on PostgreSQL 18.7 (local source build) and CI: the app role cannot disable/drop/replace the trigger or `SET session_replication_role`, even with `GRANT ALL` on the table. The table owner (the admin role) *can* disable it; layer 3 is out of scope. See `docs/learning/M2.md`. |
 | MB4 | MCP Python SDK: package name, current version, license, Python 3.14 support | M5 | **done 2026-11-11**: `mcp` 2.3.0, MIT, Python >=3.10 with a 3.14 classifier, used on 3.14.6 (PyPI JSON and repository at tag `v2.3.0`). Recorded in ADR-M5. |
@@ -27,3 +27,4 @@
 | MB23 | CI: the new step (PGDG apt repo + `postgresql-client-18` + `age`) has not run on a real runner until the M7 PR's CI; check it passes and the key URL still works | M7 | **done**: the M7 PR's CI passed with the new step (PR 11) |
 
 | MB24 | Does the server need to run on Windows (Chrome on Windows)? Today it cannot: `config.py` imports the Unix-only `pwd`, the password prompt reads `/dev/tty`, file-safety checks use Unix permission bits. Needs Rio's decision and a Windows test machine | before M8a | open (Rio's decision) |
+| MB25 | Windows: EDB installer wizard details (superuser password prompt, port, install folder, where `pg_dump.exe` lands) and whether PostgreSQL 18 works with the project on Windows; the vendor's Windows install page was not reachable | Windows port | open |
