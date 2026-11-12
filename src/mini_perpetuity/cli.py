@@ -18,8 +18,16 @@ from mini_perpetuity.admin import (
     set_approver_password,
 )
 from mini_perpetuity.authz import Denied, Request
+from mini_perpetuity.backup import (
+    BackupError,
+    make_backup,
+    restore_backup,
+    setup_backup,
+    verify_backup,
+)
 from mini_perpetuity.config import Config, ConfigError, load_config
 from mini_perpetuity.db import app_connect, approver_connect, approver_is_set, verify_instance
+from mini_perpetuity.doctor import exit_code, format_report, run_doctor
 from mini_perpetuity.mcp_server import build_server
 from mini_perpetuity.memory import HUMAN_TYPES, Memory, add_object
 from mini_perpetuity.review import ReviewError, check_reason, decide, list_proposals
@@ -211,6 +219,41 @@ def _add(args: argparse.Namespace) -> int:
     return 0
 
 
+def _doctor() -> int:
+    checks = run_doctor(load_config())
+    print(format_report(checks))
+    return exit_code(checks)
+
+
+def _backup() -> int:
+    made = make_backup(load_config())
+    print(f"backup written: {made.path} ({made.size} bytes, encrypted)")
+    print("check it can be read with: mp verify-backup FILE --key KEYFILE")
+    return 0
+
+
+def _verify_backup(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    found = verify_backup(args.file, args.key, cfg.pg_bin_dir)
+    print(f"ok: decrypts and is a complete dump; tables: {', '.join(found.tables_with_data)}")
+    return 0
+
+
+def _backup_setup(name: str, backup_dir: Path, key_file: Path, config_dir: Path) -> int:
+    recipient = setup_backup(config_dir / f"{name}.toml", backup_dir, key_file)
+    print(f"backups for {name} go to {backup_dir}, encrypted to {recipient}")
+    print(f"the secret key is in {key_file} (not shown). Copy it NOW to a place that survives")
+    print("losing this computer (e.g. your password manager). Without it no backup can be opened.")
+    return 0
+
+
+def _restore(args: argparse.Namespace) -> int:
+    done = restore_backup(_admin_dsn(), args.name, args.file, args.key, args.pg_bin_dir)
+    print(f"restored {done.memory_objects} memory objects and {done.events} ledger events")
+    print(f"into instance {args.name}; check it with: mp doctor")
+    return 0
+
+
 def _admin_dsn() -> str:
     dsn = os.environ.get("MP_ADMIN_DSN")
     if not dsn:
@@ -275,6 +318,13 @@ def main(argv: list[str] | None = None) -> int:
     reject.add_argument("ids", type=int, nargs="*", help="ids from `mp review`")
     reject.add_argument("--all", action="store_true", help="every pending item")
     reject.add_argument("--reason", required=True, help="why (recorded in the ledger)")
+    sub.add_parser(
+        "doctor", help="check that this instance, its approver and its backups are healthy"
+    )
+    sub.add_parser("backup", help="write an encrypted backup of this instance")
+    vb = sub.add_parser("verify-backup", help="prove a backup file can be decrypted and read")
+    vb.add_argument("file", type=Path)
+    vb.add_argument("--key", type=Path, required=True, help="your age secret key file")
     admin = sub.add_parser("admin", help="admin-only commands").add_subparsers(
         dest="admin_cmd", required=True
     )
@@ -287,6 +337,18 @@ def main(argv: list[str] | None = None) -> int:
     admin.add_parser(
         "set-approver", help="set the approver password, typed twice (needs MP_ADMIN_DSN)"
     ).add_argument("name")
+    bs = admin.add_parser("backup-setup", help="create a backup key and folder for an instance")
+    bs.add_argument("name")
+    bs.add_argument("--backup-dir", type=Path, required=True)
+    bs.add_argument("--key-file", type=Path, required=True)
+    bs.add_argument("--config-dir", type=Path, default=default_config_dir())
+    rs = admin.add_parser(
+        "restore", help="restore a backup into a fresh instance (needs MP_ADMIN_DSN)"
+    )
+    rs.add_argument("name")
+    rs.add_argument("file", type=Path)
+    rs.add_argument("--key", type=Path, required=True)
+    rs.add_argument("--pg-bin-dir", type=Path, help="folder with pg_restore (default: PATH)")
     args = p.parse_args(argv)
     try:
         if args.cmd == "status":
@@ -299,15 +361,26 @@ def main(argv: list[str] | None = None) -> int:
             return _serve(args)
         if args.cmd == "review":
             return _review()
+        if args.cmd == "doctor":
+            return _doctor()
+        if args.cmd == "backup":
+            return _backup()
+        if args.cmd == "verify-backup":
+            return _verify_backup(args)
         if args.cmd in ("approve", "reject"):
             return _decide(args, approve=args.cmd == "approve")
         if args.admin_cmd == "migrate":
             return _migrate(args.name)
+        if args.admin_cmd == "backup-setup":
+            return _backup_setup(args.name, args.backup_dir, args.key_file, args.config_dir)
+        if args.admin_cmd == "restore":
+            return _restore(args)
         if args.admin_cmd == "set-approver":
             return _set_approver(args.name)
         return _init(args.name, args.config_dir)
     except (
         ConfigError,
+        BackupError,
         InitError,
         Denied,
         RateLimited,

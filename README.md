@@ -149,6 +149,24 @@ uv run mp reject 6 7 --reason "that is not what I decided"
 
 **What it does not protect.** It raises the bar; it is not a wall against something that actively attacks your own machine setup. Anything running as your OS user could edit the `mp` code or your shell startup files to capture the password the next time you type it, or, where PostgreSQL runs as your user, change PostgreSQL's own configuration or files. For that you would need PostgreSQL or the approval step under a different OS user or on another machine. It also does not protect confidentiality: the everyday role can still read everything in an instance, `sensitive` objects included. Details: [ADR-M6b](docs/decisions/ADR-M6b-approver-role.md).
 
+## Backups and health
+
+```bash
+uv run mp doctor                                   # what is healthy, what needs attention, and the fix
+uv run mp admin backup-setup NAME --backup-dir DIR --key-file KEYFILE   # once per instance
+uv run mp backup                                   # encrypted dump of this instance
+uv run mp verify-backup FILE --key KEYFILE         # proves the backup can be opened
+uv run mp admin init-instance NAME                 # after a total loss: fresh, empty instance, same name
+uv run mp admin restore NAME FILE --key KEYFILE    # needs MP_ADMIN_DSN; add --pg-bin-dir if needed
+```
+
+- Backups are `pg_dump` output encrypted with [age](https://age-encryption.org) to the **public** key in your instance config. The secret key is written once to the file you name and is never printed, never in the config, and refused inside the backup folder. **Copy it somewhere that survives losing this computer; without it no backup can be opened.**
+- Needs PostgreSQL client tools of the same major version as the server or newer (`pg_dump`, `pg_restore`), on `PATH` or via `pg_bin_dir = "/path/to/bin"` in the instance config.
+- Restore goes only into a fresh instance with the **same name**, in one transaction, and records a `backup.restored` ledger event. Nothing restored is promoted: approved stays approved, pending stays pending.
+- Backups contain everything in the instance, `sensitive` objects included. Do not put real `work` data in until the employer-policy check (MB6) is done.
+- **Where to keep the backup folder (macOS) [U, not tested on a Mac]:** on an encrypted volume (FileVault covers the startup disk; an encrypted external disk or an encrypted disk image are alternatives), ideally on a different disk than PostgreSQL's data. Check the steps against Apple's current documentation and tell me what differs (MB22).
+- Design and limits: [ADR-M7](docs/decisions/ADR-M7-backups.md). Week-one checklist including the restore drill: [docs/real-use-checklist.md](docs/real-use-checklist.md).
+
 ## Data rules
 
 - No real data in git, ever: the repo holds code, docs and synthetic fixtures only.
@@ -166,8 +184,8 @@ uv run mp reject 6 7 --reason "that is not what I decided"
 | M4 | Retrieval: full-text search, default-deny authorization, audit, `mp search` | done |
 | M5 | MCP server (stdio), per-client principals, rate limits | done |
 | M6 | Write-back with quarantine: `propose_memory`, `mp review`/`approve`/`reject` | done |
-| M6b | Stronger approval: separate approver role, password typed once per batch | in review |
-| M7 | Daily use: `mp doctor`, backups | planned |
+| M6b | Stronger approval: separate approver role, password typed once per batch | done |
+| M7 | Daily use: `mp doctor`, encrypted backups and restore | in review |
 | M8 | Local web front end (HTTPS; search, add and review, timeline, audit and status) | decision record proposed ([ADR-M8](docs/decisions/ADR-M8-web-ui.md)); built after M7 |
 
 Open verification items: [docs/verification-backlog.md](docs/verification-backlog.md).
@@ -180,7 +198,7 @@ Open verification items: [docs/verification-backlog.md](docs/verification-backlo
 | `CLAUDE.md` | Instructions for the AI coding assistant |
 | `SECURITY.md` | Security notes and reporting |
 | `CHANGELOG.md` | Keep a Changelog, one entry per step |
-| `src/mini_perpetuity/` | `config.py` (loader), `admin.py` (instance creation, migrations), `db.py`, `ledger.py` (append-only events), `memory.py` (bi-temporal objects), `search.py` (retrieval), `authz.py` (default-deny gate), `access.py` (gate + rate limits), `mcp_server.py` (MCP server), `propose.py` / `review.py` (write-back and the owner's decisions; `db.py` holds the approver connection), `seatbelt.py`, `cli.py`, `migrations/` |
+| `src/mini_perpetuity/` | `config.py` (loader), `admin.py` (instance creation, migrations), `db.py`, `ledger.py` (append-only events), `memory.py` (bi-temporal objects), `search.py` (retrieval), `authz.py` (default-deny gate), `access.py` (gate + rate limits), `mcp_server.py` (MCP server), `propose.py` / `review.py` (write-back and the owner's decisions; `db.py` holds the approver connection), `backup.py` (encrypted backup, verify, restore), `doctor.py` (health checks), `seatbelt.py`, `cli.py`, `migrations/` |
 | `tests/` | Config, instance-isolation, ledger, memory, search, authorization, rate-limit, quarantine and MCP contract tests (real PostgreSQL), hook tests |
 | `pyproject.toml`, `uv.lock` | Pinned project and dependencies |
 | `docs/plan/` | The build plan |
